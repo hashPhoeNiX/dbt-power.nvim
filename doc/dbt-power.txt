@@ -1,0 +1,112 @@
+*dbt-power.txt*  dbt Power User features for Neovim
+
+==============================================================================
+CONTENTS                                                *dbt-power-contents*
+
+1. Introduction ....................................... |dbt-power-intro|
+2. Setup .............................................. |dbt-power-setup|
+3. Commands ........................................... |dbt-power-commands|
+4. Keymaps ............................................ |dbt-power-keymaps|
+5. Configuration ...................................... |dbt-power-config|
+
+==============================================================================
+INTRODUCTION                                            *dbt-power-intro*
+
+dbt-power.nvim provides Power User-like features for dbt development in
+Neovim, including inline query results, compiled SQL preview, and more.
+
+Features:
+- Inline query results (like Jupyter notebooks)
+- Compiled SQL preview in split window
+- Execute current model or visual selection
+- Telescope integration for model navigation
+- CSV export of query results
+
+==============================================================================
+SETUP                                                   *dbt-power-setup*
+
+Minimum configuration:
+>
+    require("dbt-power").setup({
+        dbt_cloud_cli = "dbt",
+        inline_results = {
+            enabled = true,
+            max_rows = 500,
+        },
+    })
+<
+
+See |dbt-power-config| for full configuration options.
+
+==============================================================================
+COMMANDS                                                *dbt-power-commands*
+
+:DbtPreview                                            *:DbtPreview*
+    Show compiled SQL in a split window
+
+:DbtExecute                                            *:DbtExecute*
+    Execute query and show results inline
+
+:DbtClearResults                                       *:DbtClearResults*
+    Clear all inline results in current buffer
+
+:DbtToggleAutoCompile                                  *:DbtToggleAutoCompile*
+    Toggle auto-compile mode (live preview as you type)
+
+==============================================================================
+KEYMAPS                                                 *dbt-power-keymaps*
+
+Default keymaps (configurable):
+
+    <leader>dv    Preview compiled SQL
+    <C-CR>        Execute query and show results inline
+    <leader>dC    Clear inline results
+    <leader>dA    Toggle auto-compile mode
+
+Visual mode:
+    <C-CR>        Execute visual selection
+
+==============================================================================
+CONFIGURATION                                           *dbt-power-config*
+
+Full configuration with defaults:
+>
+    require("dbt-power").setup({
+        -- dbt CLI configuration
+        dbt_cloud_cli = "dbt",
+        dbt_project_dir = nil,  -- Auto-detect
+
+        -- Inline results
+        inline_results = {
+            enabled = true,
+            max_rows = 500,
+            max_column_width = 50,
+            auto_clear_on_execute = false,
+            style = "markdown",  -- or "simple"
+        },
+
+        -- Compiled SQL preview
+        preview = {
+            auto_compile = false,
+            split_position = "right",  -- or "below"
+            split_size = 80,
+        },
+
+        -- Database connections
+        database = {
+            use_dadbod = true,
+            default_connection = nil,
+        },
+
+        -- Keymaps (set to false to disable)
+        keymaps = {
+            compile_preview = "<leader>dv",
+            execute_inline = "<C-CR>",
+            clear_results = "<leader>dC",
+            toggle_auto_compile = "<leader>dA",
+        },
+    })
+<
+
+==============================================================================
+vim:tw=78:ts=8:ft=help:norl:
