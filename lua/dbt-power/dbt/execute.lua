@@ -453,9 +453,9 @@ function M.parse_dbt_show_results(output)
   for i = header_idx + 1, #lines do
     local line = vim.trim(lines[i])
 
-    -- Skip separator lines
-    if line:match("^[%s%┌%┐%└%┘%├%┤%┼%─%┬%┴%│%]+$") or
-       line:match("^[%s%-%+%|]+$") or
+    -- Skip separator lines (box-drawing or ASCII separators)
+    if line:match("^[┌┐└┘├┤┼─┬┴│%s]+$") or
+       line:match("^[%s%-%+|]+$") or
        line == "" then
       goto continue
     end
