@@ -371,13 +371,17 @@ end
 
 -- FALLBACK METHOD: Use dbt show if compile/execute approach fails
 function M.execute_with_dbt_show(project_root, model_name, callback)
-  vim.notify("[dbt-power] Falling back to dbt show command", vim.log.levels.WARN)
+  vim.notify("[dbt-power] Executing with dbt show command", vim.log.levels.INFO)
+
+  local limit = M.config.inline_results and M.config.inline_results.max_rows or 500
 
   local cmd = {
     M.config.dbt_cloud_cli or "dbt",
     "show",
     "--select",
     model_name,
+    "--limit",
+    tostring(limit),
   }
 
   Job:new({
