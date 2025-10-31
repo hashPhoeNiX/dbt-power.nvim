@@ -31,8 +31,8 @@ function M.execute_and_show_inline()
   -- Show loading indicator
   vim.notify("[dbt-power] Executing query...", vim.log.levels.INFO)
 
-  -- Execute query via vim-dadbod
-  M.execute_query_dadbod(preview_sql, function(results)
+  -- Execute query via dbt (preferred) or fallback to vim-dadbod
+  M.execute_query_dbt(preview_sql, function(results)
     if results.error then
       vim.notify("[dbt-power] Error: " .. results.error, vim.log.levels.ERROR)
       return
@@ -69,8 +69,11 @@ function M.execute_selection()
   -- Add LIMIT
   local preview_sql = M.add_limit_clause(sql, M.config.inline_results.max_rows)
 
-  -- Execute
-  M.execute_query_dadbod(preview_sql, function(results)
+  -- Show loading indicator
+  vim.notify("[dbt-power] Executing selection...", vim.log.levels.INFO)
+
+  -- Execute via dbt (preferred) or fallback to vim-dadbod
+  M.execute_query_dbt(preview_sql, function(results)
     if results.error then
       vim.notify("[dbt-power] Error: " .. results.error, vim.log.levels.ERROR)
       return
@@ -147,92 +150,183 @@ function M.compile_current_model()
   return nil
 end
 
--- Execute query using vim-dadbod
-function M.execute_query_dadbod(sql, callback)
-  -- Check if dadbod is available
-  if vim.fn.exists(":DB") == 0 then
-    callback({ error = "vim-dadbod not available" })
+-- Execute query using dbt query command
+function M.execute_query_dbt(sql, callback)
+  local project_root = require("dbt-power.utils.project").find_dbt_project()
+  if not project_root then
+    callback({ error = "Not in a dbt project" })
     return
   end
 
-  -- Get default connection from dadbod-ui
-  local db_url = vim.g.db or vim.b.db
-  if not db_url then
-    callback({ error = "No database connection configured. Use :DBUIAddConnection" })
+  -- Create temporary SQL file
+  local tmp_sql = vim.fn.tempname() .. ".sql"
+  local tmp_results = vim.fn.tempname() .. ".json"
+
+  local file = io.open(tmp_sql, "w")
+  if not file then
+    callback({ error = "Could not create temporary SQL file" })
     return
   end
+  file:write(sql)
+  file:close()
 
-  -- Create temporary file for results
-  local tmp_file = vim.fn.tempname()
-
-  -- Execute query
-  local cmd = string.format(
-    [[echo %s | DB %s > %s]],
-    vim.fn.shellescape(sql),
-    vim.fn.shellescape(db_url),
-    tmp_file
-  )
+  -- Execute using dbt query command (if available in dbt >= 1.5)
+  local cmd = {
+    M.config.dbt_cloud_cli or "dbt",
+    "query",
+    "--sql",
+    sql,
+    "--inline",
+  }
 
   Job:new({
-    command = "sh",
-    args = { "-c", cmd },
+    command = cmd[1],
+    args = vim.list_slice(cmd, 2),
+    cwd = project_root,
     on_exit = function(j, return_val)
       vim.schedule(function()
+        -- Clean up temp file
+        vim.fn.delete(tmp_sql)
+
         if return_val ~= 0 then
-          local error_msg = table.concat(j:stderr_result(), "\n")
-          callback({ error = error_msg })
+          -- dbt query might not be available, try alternative method
+          M.execute_query_dadbod_fallback(sql, callback)
           return
         end
 
-        -- Parse results
-        local results = M.parse_dadbod_results(tmp_file)
+        -- Parse results from dbt query output
+        local stdout = table.concat(j:result(), "\n")
+        local results = M.parse_dbt_query_results(stdout)
         callback(results)
-
-        -- Clean up
-        vim.fn.delete(tmp_file)
       end)
     end,
   }):start()
 end
 
--- Parse vim-dadbod output
-function M.parse_dadbod_results(filepath)
-  local file = io.open(filepath, "r")
-  if not file then
-    return { error = "Could not read results" }
+-- Execute query using vim-dadbod (fallback)
+function M.execute_query_dadbod_fallback(sql, callback)
+  -- Check if dadbod is available
+  if vim.fn.exists(":DB") == 0 then
+    callback({ error = "vim-dadbod not available. Install vim-dadbod and configure database connection." })
+    return
   end
 
-  local content = file:read("*all")
+  -- Try to get database connection from dadbod
+  -- First check if any connection is configured
+  local db_list = vim.fn.dadbod#get_db_list()
+  if not db_list or #db_list == 0 then
+    callback({ error = "No database connections configured. Use :DBUIAddConnection to add one." })
+    return
+  end
+
+  -- Use the first available connection
+  local db_name = db_list[1]
+
+  -- Create temporary file for SQL
+  local tmp_sql = vim.fn.tempname() .. ".sql"
+  local tmp_results = vim.fn.tempname() .. ".csv"
+
+  local file = io.open(tmp_sql, "w")
+  if not file then
+    callback({ error = "Could not create temporary SQL file" })
+    return
+  end
+  file:write(sql)
   file:close()
 
-  -- Parse table format (simple implementation)
-  local lines = vim.split(content, "\n")
+  -- Use dadbod's execute method through Vim's DB command
+  Job:new({
+    command = "sh",
+    args = {
+      "-c",
+      string.format(
+        "cd %s && cat %s | %s query '%s' > %s 2>&1",
+        vim.fn.shellescape(vim.fn.getcwd()),
+        vim.fn.shellescape(tmp_sql),
+        M.config.dbt_cloud_cli or "dbt",
+        db_name,
+        vim.fn.shellescape(tmp_results)
+      )
+    },
+    on_exit = function(j, return_val)
+      vim.schedule(function()
+        -- Clean up temp files
+        vim.fn.delete(tmp_sql)
+
+        if return_val ~= 0 then
+          local error_output = table.concat(j:stderr_result(), "\n")
+          callback({ error = error_output or "Query execution failed" })
+          vim.fn.delete(tmp_results)
+          return
+        end
+
+        -- Parse CSV results
+        local results = M.parse_csv_results(tmp_results)
+        callback(results)
+
+        -- Clean up results file
+        vim.fn.delete(tmp_results)
+      end)
+    end,
+  }):start()
+end
+
+-- Parse dbt query output
+function M.parse_dbt_query_results(output)
+  -- dbt query outputs a table-formatted result
+  local lines = vim.split(output, "\n")
 
   if #lines < 2 then
     return { columns = {}, rows = {} }
   end
 
-  -- First line is header
-  local header_line = lines[1]
-  local columns = {}
-  for col in header_line:gmatch("%S+") do
-    table.insert(columns, col)
+  -- Parse header (first non-empty line)
+  local header_line = ""
+  local start_idx = 1
+  for i, line in ipairs(lines) do
+    if line and line:match("%S") then
+      header_line = line
+      start_idx = i + 1
+      break
+    end
   end
 
-  -- Skip separator line (if present)
-  local start_line = 2
-  if lines[2]:match("^[-%s|]+$") then
-    start_line = 3
+  -- Extract column names (handle piped separator)
+  local columns = {}
+  if header_line:match("|") then
+    -- Piped format: | col1 | col2 |
+    for col in header_line:gmatch("|([^|]+)") do
+      table.insert(columns, vim.trim(col))
+    end
+  else
+    -- Space-separated
+    for col in header_line:gmatch("%S+") do
+      table.insert(columns, col)
+    end
+  end
+
+  -- Skip separator line if present
+  local data_start = start_idx
+  if lines[start_idx] and lines[start_idx]:match("^[%s%|%-]+$") then
+    data_start = start_idx + 1
   end
 
   -- Parse data rows
   local rows = {}
-  for i = start_line, #lines do
+  for i = data_start, #lines do
     local line = lines[i]
-    if line and line ~= "" then
+    if line and line:match("%S") then
       local row = {}
-      for value in line:gmatch("%S+") do
-        table.insert(row, value)
+      if line:match("|") then
+        -- Piped format
+        for value in line:gmatch("|([^|]*)") do
+          table.insert(row, vim.trim(value))
+        end
+      else
+        -- Space-separated
+        for value in line:gmatch("%S+") do
+          table.insert(row, value)
+        end
       end
       if #row > 0 then
         table.insert(rows, row)
@@ -244,6 +338,64 @@ function M.parse_dadbod_results(filepath)
     columns = columns,
     rows = rows,
   }
+end
+
+-- Parse CSV results file
+function M.parse_csv_results(filepath)
+  local file = io.open(filepath, "r")
+  if not file then
+    return { error = "Could not read results file" }
+  end
+
+  local content = file:read("*all")
+  file:close()
+
+  local lines = vim.split(content, "\n")
+  if #lines < 1 then
+    return { columns = {}, rows = {} }
+  end
+
+  -- Parse header (first line)
+  local columns = {}
+  local header = lines[1]
+  for col in header:gmatch("([^,]+)") do
+    table.insert(columns, vim.trim(col))
+  end
+
+  -- Parse data rows
+  local rows = {}
+  for i = 2, #lines do
+    local line = vim.trim(lines[i])
+    if line ~= "" then
+      local row = {}
+      -- Simple CSV parsing (doesn't handle quoted commas)
+      for value in line:gmatch("([^,]+)") do
+        table.insert(row, vim.trim(value))
+      end
+      if #row > 0 then
+        table.insert(rows, row)
+      end
+    end
+  end
+
+  return {
+    columns = columns,
+    rows = rows,
+  }
+end
+
+-- Parse vim-dadbod output (legacy fallback)
+function M.parse_dadbod_results(filepath)
+  local file = io.open(filepath, "r")
+  if not file then
+    return { error = "Could not read results" }
+  end
+
+  local content = file:read("*all")
+  file:close()
+
+  -- Try CSV format first
+  return M.parse_csv_results(filepath)
 end
 
 -- Add LIMIT clause to SQL
