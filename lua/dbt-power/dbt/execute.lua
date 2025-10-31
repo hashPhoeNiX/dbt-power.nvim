@@ -91,8 +91,46 @@ end
 
 -- Execute visual selection
 function M.execute_selection()
-  vim.notify("[dbt-power] Visual selection execution requires database setup (vim-dadbod)", vim.log.levels.INFO)
-  vim.notify("[dbt-power] For now, use <leader>dr to run the full model", vim.log.levels.INFO)
+  local bufnr = vim.api.nvim_get_current_buf()
+  local start_line = vim.fn.getpos("'<")[2] - 1
+  local end_line = vim.fn.getpos("'>")[2]
+
+  -- Get selected text
+  local selected_lines = vim.api.nvim_buf_get_lines(bufnr, start_line, end_line, false)
+  if #selected_lines == 0 then
+    vim.notify("[dbt-power] No selection", vim.log.levels.WARN)
+    return
+  end
+
+  local selected_sql = table.concat(selected_lines, "\n")
+  local cursor_line = start_line
+
+  -- Clear previous results
+  inline_results.clear_at_line(bufnr, cursor_line)
+
+  -- Show loading indicator
+  vim.notify("[dbt-power] Executing selection...", vim.log.levels.INFO)
+
+  -- Add LIMIT if not present
+  local sql_upper = selected_sql:upper()
+  if not sql_upper:match("LIMIT") then
+    local limit = M.config.inline_results.max_rows or 500
+    selected_sql = M.wrap_with_limit(selected_sql, limit)
+  end
+
+  -- Execute via vim-dadbod
+  M.execute_via_dadbod(selected_sql, function(results)
+    if results.error then
+      vim.notify("[dbt-power] Error: " .. results.error, vim.log.levels.ERROR)
+      return
+    end
+
+    inline_results.display_query_results(bufnr, cursor_line, results)
+    vim.notify(
+      string.format("[dbt-power] Executed successfully (%d rows)", #results.rows),
+      vim.log.levels.INFO
+    )
+  end)
 end
 
 -- Execute dbt model using Power User approach (compile → wrap → execute)
@@ -208,22 +246,127 @@ function M.wrap_with_limit(sql, limit)
   )
 end
 
--- STEP 3: Execute wrapped SQL against database
--- For now, show the wrapped SQL that would be executed
--- This would connect to database in production
+-- STEP 3: Execute wrapped SQL against database via vim-dadbod
 function M.execute_wrapped_sql(project_root, wrapped_sql, callback)
-  -- TODO: Execute against database via vim-dadbod or direct connection
-  -- For now, return a placeholder result indicating the approach
-  vim.notify("[dbt-power] Would execute: " .. wrapped_sql:sub(1, 50) .. "...", vim.log.levels.INFO)
+  -- Try to execute using vim-dadbod if available
+  local ok, dadbod = pcall(require, "dadbod")
 
-  -- Placeholder: Return sample results structure
-  callback({
-    columns = { "id", "value" },
-    rows = {
-      { "1", "sample1" },
-      { "2", "sample2" },
-    }
-  })
+  if ok then
+    -- vim-dadbod available, use it to execute query
+    M.execute_via_dadbod(wrapped_sql, callback)
+  else
+    -- Fallback: Try using dbt show as alternate execution method
+    vim.notify("[dbt-power] vim-dadbod not available, using dbt show as fallback", vim.log.levels.WARN)
+    -- For now, show a message about what would be executed
+    vim.notify("[dbt-power] Would execute: " .. wrapped_sql:sub(1, 50) .. "...", vim.log.levels.INFO)
+    callback({
+      error = "Database connection not configured. Use <leader>db to configure via DBUI"
+    })
+  end
+end
+
+-- Execute SQL using vim-dadbod database interface
+function M.execute_via_dadbod(sql, callback)
+  -- vim-dadbod requires an active database connection
+  -- Check if a database is configured
+  local db = vim.g.db or vim.g.dbs and vim.g.dbs[vim.g.db_ui_default_connection]
+
+  if not db then
+    callback({ error = "No database connection configured. Use :DBUIToggle to configure." })
+    return
+  end
+
+  -- Create temp SQL file for execution
+  local temp_file = vim.fn.tempname() .. ".sql"
+  local output_file = vim.fn.tempname() .. ".csv"
+
+  local file = io.open(temp_file, "w")
+  if not file then
+    callback({ error = "Could not create temp SQL file" })
+    return
+  end
+
+  file:write(sql)
+  file:close()
+
+  -- Use dadbod to execute the query and save results to CSV
+  local cmd = string.format(
+    'DB %s < "%s" > "%s" 2>&1',
+    db,
+    temp_file,
+    output_file
+  )
+
+  Job:new({
+    command = "sh",
+    args = { "-c", cmd },
+    on_exit = function(j, return_val)
+      vim.schedule(function()
+        -- Clean up temp files
+        os.remove(temp_file)
+
+        if return_val ~= 0 then
+          local stderr = table.concat(j:stderr_result(), "\n")
+          os.remove(output_file)
+          callback({ error = "Database query failed: " .. stderr })
+          return
+        end
+
+        -- Read and parse results
+        local output = io.open(output_file, "r")
+        if not output then
+          callback({ error = "Could not read query results" })
+          return
+        end
+
+        local results = output:read("*a")
+        output:close()
+        os.remove(output_file)
+
+        -- Parse CSV results
+        local parsed = M.parse_csv_results(results)
+        callback(parsed)
+      end)
+    end,
+  }):start()
+end
+
+-- Parse CSV results from query output
+function M.parse_csv_results(csv_content)
+  local lines = vim.split(csv_content, "\n")
+  local columns = {}
+  local rows = {}
+
+  if #lines == 0 then
+    return { columns = {}, rows = {} }
+  end
+
+  -- First line is header (comma-separated)
+  local header_line = vim.trim(lines[1])
+  if header_line ~= "" then
+    for col in header_line:gmatch("[^,]+") do
+      table.insert(columns, vim.trim(col))
+    end
+  end
+
+  -- Parse data rows
+  for i = 2, #lines do
+    local line = vim.trim(lines[i])
+    if line ~= "" then
+      local row = {}
+      for value in line:gmatch("[^,]+") do
+        table.insert(row, vim.trim(value))
+      end
+      if #row == #columns then
+        table.insert(rows, row)
+      end
+    end
+  end
+
+  return {
+    columns = columns,
+    rows = rows,
+  }
 end
 
 -- FALLBACK METHOD: Use dbt show if compile/execute approach fails
