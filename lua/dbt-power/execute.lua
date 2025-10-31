@@ -7,6 +7,10 @@ function M.execute_and_show_inline()
   require("dbt-power.dbt.execute").execute_and_show_inline()
 end
 
+function M.execute_with_dbt_show_command()
+  require("dbt-power.dbt.execute").execute_with_dbt_show_command()
+end
+
 function M.execute_selection()
   require("dbt-power.dbt.execute").execute_selection()
 end
