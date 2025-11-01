@@ -45,6 +45,47 @@ function M.execute_and_show_inline()
   end
 end
 
+-- Execute current model with results in buffer (BUFFER OUTPUT METHOD)
+-- Display results in a split window instead of inline
+function M.execute_with_dbt_show_buffer()
+  -- Show loading indicator
+  vim.notify("[dbt-power] Executing query (buffer mode)...", vim.log.levels.INFO)
+
+  -- Check if we're in a dbt model file
+  local filepath = vim.fn.expand("%:p")
+
+  if filepath:match("%.sql$") then
+    -- Get model name and project root
+    local model_name = M.get_model_name()
+    local project_root = require("dbt-power.utils.project").find_dbt_project()
+
+    if not model_name or not project_root then
+      vim.notify("[dbt-power] Could not determine model name or project root", vim.log.levels.ERROR)
+      return
+    end
+
+    -- Use dbt show approach
+    M.execute_with_dbt_show(project_root, model_name, function(results)
+      if results.error then
+        vim.notify("[dbt-power] Error: " .. results.error, vim.log.levels.ERROR)
+        return
+      end
+
+      -- Display in buffer instead of inline
+      local buffer_output = require("dbt-power.ui.buffer_output")
+      buffer_output.show_results_in_buffer(results, "Model: " .. model_name)
+
+      vim.notify(
+        string.format("[dbt-power] Executed successfully (%d rows)", #results.rows),
+        vim.log.levels.INFO
+      )
+    end)
+  else
+    -- Not in a model file - show message
+    vim.notify("[dbt-power] Not in a dbt model file (.sql)", vim.log.levels.WARN)
+  end
+end
+
 -- Execute current model using dbt show (ALTERNATIVE METHOD)
 -- Use different keymap for this (e.g., <leader>ds)
 function M.execute_with_dbt_show_command()

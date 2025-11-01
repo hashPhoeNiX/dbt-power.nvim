@@ -11,6 +11,10 @@ function M.execute_with_dbt_show_command()
   require("dbt-power.dbt.execute").execute_with_dbt_show_command()
 end
 
+function M.execute_with_dbt_show_buffer()
+  require("dbt-power.dbt.execute").execute_with_dbt_show_buffer()
+end
+
 function M.execute_selection()
   require("dbt-power.dbt.execute").execute_selection()
 end
