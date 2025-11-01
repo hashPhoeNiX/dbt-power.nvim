@@ -489,12 +489,20 @@ function M.parse_dbt_show_results(output)
   if header_line:match("┃") then
     -- Box-drawing format: ┃ col1 ┃ col2 ┃
     for col in header_line:gmatch("┃([^┃]+)") do
-      table.insert(columns, vim.trim(col))
+      local trimmed = vim.trim(col)
+      -- Skip the "..." truncation marker
+      if trimmed ~= "..." then
+        table.insert(columns, trimmed)
+      end
     end
   else
     -- Pipe format: | col1 | col2 |
     for col in header_line:gmatch("|([^|]+)") do
-      table.insert(columns, vim.trim(col))
+      local trimmed = vim.trim(col)
+      -- Skip the "..." truncation marker
+      if trimmed ~= "..." then
+        table.insert(columns, trimmed)
+      end
     end
   end
 
@@ -513,13 +521,25 @@ function M.parse_dbt_show_results(output)
     local row = {}
     if line:match("│") then
       -- Box-drawing format: │ val1 │ val2 │
+      local col_count = 0
       for value in line:gmatch("│([^│]+)") do
-        table.insert(row, vim.trim(value))
+        col_count = col_count + 1
+        local trimmed = vim.trim(value)
+        -- Skip the "..." truncation marker at the end
+        if not (col_count > #columns and trimmed == "...") then
+          table.insert(row, trimmed)
+        end
       end
     elseif line:match("|") then
       -- Pipe format: | val1 | val2 |
+      local col_count = 0
       for value in line:gmatch("|([^|]+)") do
-        table.insert(row, vim.trim(value))
+        col_count = col_count + 1
+        local trimmed = vim.trim(value)
+        -- Skip the "..." truncation marker at the end
+        if not (col_count > #columns and trimmed == "...") then
+          table.insert(row, trimmed)
+        end
       end
     end
 

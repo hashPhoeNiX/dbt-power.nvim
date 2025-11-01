@@ -128,6 +128,9 @@ function M.preview_cte(cte_name, callback)
           return
         end
 
+        -- Debug: log the query being executed
+        vim.notify("[dbt-power] Executing CTE query with " .. cte_name, vim.log.levels.INFO)
+
         -- Execute the CTE query
         local limit = M.config.inline_results and M.config.inline_results.max_rows or 500
         local show_cmd = {
@@ -157,7 +160,9 @@ function M.preview_cte(cte_name, callback)
               local results = parse_dbt.parse_dbt_show_results(stdout)
 
               if not results.columns or #results.columns == 0 then
-                vim.notify("[dbt-power] CTE returned no results", vim.log.levels.WARN)
+                -- Debug: show the raw output
+                local stderr = table.concat(j2:stderr_result(), "\n")
+                vim.notify("[dbt-power] CTE returned no results. Stderr: " .. stderr:sub(1, 200), vim.log.levels.WARN)
                 buffer_output.clear_loading()
                 return
               end
