@@ -44,104 +44,180 @@ end
 
 -- Preview a specific CTE by executing it
 function M.preview_cte(cte_name, callback)
-  local bufnr = vim.api.nvim_get_current_buf()
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local full_sql = table.concat(lines, "\n")
-
-  -- Extract the CTE definition and wrap it in SELECT *
-  local cte_query = M.wrap_cte_for_execution(full_sql, cte_name)
-
-  if not cte_query then
-    vim.notify("[dbt-power] Could not find CTE: " .. cte_name, vim.log.levels.ERROR)
-    return
-  end
-
-  -- Execute the CTE query
   local project_root = require("dbt-power.utils.project").find_dbt_project()
   if not project_root then
     vim.notify("[dbt-power] Not in a dbt project", vim.log.levels.ERROR)
     return
   end
 
-  vim.notify("[dbt-power] Previewing CTE: " .. cte_name, vim.log.levels.INFO)
+  local model_name = require("dbt-power.dbt.execute").get_model_name()
+  if not model_name then
+    vim.notify("[dbt-power] Could not determine model name", vim.log.levels.ERROR)
+    return
+  end
 
-  -- Use dbt show to execute the CTE
-  local limit = M.config.inline_results and M.config.inline_results.max_rows or 500
-  local cmd = {
-    "dbt",
-    "show",
-    "--inline",
-    cte_query,
-    "--limit",
-    tostring(limit),
-  }
+  -- Show loading message
+  local buffer_output = require("dbt-power.ui.buffer_output")
+  buffer_output.show_loading("[dbt-power] Executing " .. model_name .. " (CTE: " .. cte_name .. ")...")
 
-  Job:new({
-    command = cmd[1],
-    args = vim.list_slice(cmd, 2),
+  -- First, compile the model to get actual SQL
+  local compile_job = Job:new({
+    command = "dbt",
+    args = { "compile", "--select", model_name },
     cwd = project_root,
     on_exit = function(j, return_val)
       vim.schedule(function()
         if return_val ~= 0 then
           local stderr = table.concat(j:stderr_result(), "\n")
-          vim.notify("[dbt-power] CTE preview failed: " .. stderr, vim.log.levels.ERROR)
+          vim.notify("[dbt-power] Compile failed: " .. stderr, vim.log.levels.ERROR)
+          buffer_output.clear_loading()
           return
         end
 
-        local stdout = table.concat(j:result(), "\n")
-        local inline_results = require("dbt-power.ui.inline_results")
-        local parse_dbt = require("dbt-power.dbt.execute")
-        local results = parse_dbt.parse_dbt_show_results(stdout)
+        -- Read compiled SQL - find it in target/compiled by searching for model name
+        -- Compiled structure: target/compiled/<project_name>/models/<path>/<model_name>.sql
+        local compiled_dir = project_root .. "/target/compiled"
+        local compiled_path = nil
 
-        if not results.columns or #results.columns == 0 then
-          vim.notify("[dbt-power] CTE returned no results", vim.log.levels.WARN)
+        -- Search for the compiled file by walking the directory tree
+        local function find_compiled_file(dir, target_name)
+          local handle = vim.fn.glob(dir .. "/*", 1, 1)
+          if not handle or #handle == 0 then
+            return nil
+          end
+
+          for _, entry in ipairs(handle) do
+            if vim.fn.isdirectory(entry) == 1 then
+              -- Recurse into directories
+              local result = find_compiled_file(entry, target_name)
+              if result then return result end
+            else
+              -- Check if filename matches model name
+              if entry:match(target_name .. "%.sql$") then
+                return entry
+              end
+            end
+          end
+          return nil
+        end
+
+        compiled_path = find_compiled_file(compiled_dir, model_name)
+
+        if not compiled_path then
+          vim.notify("[dbt-power] Could not find compiled SQL for model: " .. model_name, vim.log.levels.ERROR)
+          buffer_output.clear_loading()
           return
         end
 
-        -- Display in buffer for CTE previews
-        local buffer_output = require("dbt-power.ui.buffer_output")
-        buffer_output.show_results_in_buffer(results, "CTE: " .. cte_name)
+        local file = io.open(compiled_path, "r")
+        if not file then
+          vim.notify("[dbt-power] Could not read compiled SQL file", vim.log.levels.ERROR)
+          buffer_output.clear_loading()
+          return
+        end
 
-        vim.notify(
-          string.format("[dbt-power] CTE preview: %d rows", #results.rows),
-          vim.log.levels.INFO
-        )
+        local compiled_sql = file:read("*a")
+        file:close()
+
+        -- Now wrap to select from specific CTE
+        local cte_query = M.wrap_cte_for_execution(compiled_sql, cte_name)
+
+        if not cte_query then
+          vim.notify("[dbt-power] Could not extract CTE: " .. cte_name, vim.log.levels.ERROR)
+          buffer_output.clear_loading()
+          return
+        end
+
+        -- Execute the CTE query
+        local limit = M.config.inline_results and M.config.inline_results.max_rows or 500
+        local show_cmd = {
+          "dbt",
+          "show",
+          "--inline",
+          cte_query,
+          "--limit",
+          tostring(limit),
+        }
+
+        Job:new({
+          command = show_cmd[1],
+          args = vim.list_slice(show_cmd, 2),
+          cwd = project_root,
+          on_exit = function(j2, return_val2)
+            vim.schedule(function()
+              if return_val2 ~= 0 then
+                local stderr = table.concat(j2:stderr_result(), "\n")
+                vim.notify("[dbt-power] CTE execution failed: " .. stderr, vim.log.levels.ERROR)
+                buffer_output.clear_loading()
+                return
+              end
+
+              local stdout = table.concat(j2:result(), "\n")
+              local parse_dbt = require("dbt-power.dbt.execute")
+              local results = parse_dbt.parse_dbt_show_results(stdout)
+
+              if not results.columns or #results.columns == 0 then
+                vim.notify("[dbt-power] CTE returned no results", vim.log.levels.WARN)
+                buffer_output.clear_loading()
+                return
+              end
+
+              -- Display in buffer for CTE previews
+              buffer_output.show_results_in_buffer(results, "CTE: " .. cte_name)
+
+              vim.notify(
+                string.format("[dbt-power] CTE preview: %d rows", #results.rows),
+                vim.log.levels.INFO
+              )
+            end)
+          end,
+        }):start()
       end)
     end,
-  }):start()
+  })
+
+  compile_job:start()
 end
 
 -- Wrap CTE in SELECT * to execute just that CTE
 function M.wrap_cte_for_execution(full_sql, cte_name)
-  -- Extract the CTE and everything up to and including its definition
-  -- Then SELECT * FROM cte_name
+  -- Replace the final SELECT with SELECT * FROM cte_name
+  -- This keeps all the WITH clauses intact
+  -- Note: Don't include LIMIT in the query; use --limit flag instead
 
-  -- Find the WITH clause start
-  local with_start = full_sql:find("WITH%s+")
-  if not with_start then
+  -- Find the main SELECT at the end (after all WITH clauses)
+  -- Match the final SELECT statement and replace it
+
+  -- Look for the last SELECT statement that's not inside parentheses
+  -- Simple approach: find WHERE the last main SELECT starts
+
+  local with_end = full_sql:find("WITH%s+")
+  if not with_end then
+    -- No WITH clause, can't preview CTE
     return nil
   end
 
-  -- Find the main query (after all CTEs)
-  -- Look for SELECT, INSERT, UPDATE, DELETE, CREATE after the CTEs
-  local main_query_start = full_sql:find("\n%s*SELECT%s+", with_start)
-  if not main_query_start then
-    main_query_start = full_sql:find("\n%s*INSERT%s+", with_start)
-  end
-  if not main_query_start then
-    main_query_start = full_sql:find("\n%s*UPDATE%s+", with_start)
-  end
-
-  if not main_query_start then
-    -- Fallback: just wrap the CTE
-    return string.format("WITH %s AS (\n%s\n)\nSELECT * FROM %s LIMIT 500",
-      cte_name, full_sql, cte_name)
+  -- Find the last SELECT in the query (the main one)
+  local last_select = nil
+  local pos = with_end
+  while true do
+    local next_select = full_sql:find("SELECT%s+", pos)
+    if not next_select then
+      break
+    end
+    last_select = next_select
+    pos = next_select + 6
   end
 
-  -- Extract the full WITH clause and replace the main query
-  local with_clause = full_sql:sub(with_start, main_query_start)
+  if not last_select then
+    return nil
+  end
 
-  return with_clause .. "\nSELECT * FROM " .. cte_name .. " LIMIT 500"
+  -- Extract everything up to the final SELECT
+  local before_final_select = full_sql:sub(1, last_select - 1)
+
+  -- Append SELECT * FROM cte_name (without LIMIT - it's handled via --limit flag)
+  return before_final_select .. "SELECT * FROM " .. cte_name
 end
 
 -- Show CTE picker using vim.ui.select (built-in, always available)
