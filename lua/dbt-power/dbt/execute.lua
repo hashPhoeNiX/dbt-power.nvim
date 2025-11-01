@@ -48,9 +48,6 @@ end
 -- Execute current model with results in buffer (BUFFER OUTPUT METHOD)
 -- Display results in a split window instead of inline
 function M.execute_with_dbt_show_buffer()
-  -- Show loading indicator
-  vim.notify("[dbt-power] Executing query (buffer mode)...", vim.log.levels.INFO)
-
   -- Check if we're in a dbt model file
   local filepath = vim.fn.expand("%:p")
 
@@ -64,15 +61,19 @@ function M.execute_with_dbt_show_buffer()
       return
     end
 
+    -- Show loading indicator
+    local buffer_output = require("dbt-power.ui.buffer_output")
+    buffer_output.show_loading("[dbt-power] Executing " .. model_name .. "...")
+
     -- Use dbt show approach
     M.execute_with_dbt_show(project_root, model_name, function(results)
       if results.error then
         vim.notify("[dbt-power] Error: " .. results.error, vim.log.levels.ERROR)
+        buffer_output.clear_loading()
         return
       end
 
       -- Display in buffer instead of inline
-      local buffer_output = require("dbt-power.ui.buffer_output")
       buffer_output.show_results_in_buffer(results, "Model: " .. model_name)
 
       vim.notify(
@@ -96,7 +97,10 @@ function M.execute_with_dbt_show_command()
   inline_results.clear_at_line(bufnr, cursor_line)
 
   -- Show loading indicator
-  vim.notify("[dbt-power] Executing query (dbt show mode)...", vim.log.levels.INFO)
+  local model_name = M.get_model_name()
+  vim.notify("[dbt-power] Executing " .. (model_name or "query") .. "...", vim.log.levels.INFO, {
+    timeout = 0,  -- Don't auto-dismiss while waiting
+  })
 
   -- Check if we're in a dbt model file
   local filepath = vim.fn.expand("%:p")
