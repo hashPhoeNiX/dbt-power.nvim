@@ -144,7 +144,7 @@ function M.wrap_cte_for_execution(full_sql, cte_name)
   return with_clause .. "\nSELECT * FROM " .. cte_name .. " LIMIT 500"
 end
 
--- Show CTE picker using Telescope
+-- Show CTE picker using vim.ui.select (built-in, always available)
 function M.show_cte_picker()
   local ctes = M.extract_ctes()
 
@@ -159,33 +159,17 @@ function M.show_cte_picker()
     return
   end
 
-  -- Try to use Telescope for picker
-  local ok, telescope = pcall(require, "telescope.builtin")
-  if ok then
-    telescope.custom_list({
-      prompt_title = "Select CTE to preview",
-      results = ctes,
-    }, {
-      attach_mappings = function(prompt_bufnr, map)
-        local actions = require("telescope.actions")
-        map("i", "<CR>", function()
-          actions.close(prompt_bufnr)
-          local selected = ctes[vim.fn.line(".")]
-          M.preview_cte(selected, function() end)
-        end)
-        return true
-      end,
-    })
-  else
-    -- Fallback: use vim.ui.select if Telescope not available
-    vim.ui.select(ctes, {
-      prompt = "Select CTE to preview:",
-    }, function(choice)
-      if choice then
-        M.preview_cte(choice, function() end)
-      end
-    end)
-  end
+  -- Use vim.ui.select for CTE picker (built-in, always available)
+  vim.ui.select(ctes, {
+    prompt = "Select CTE to preview:",
+    format_item = function(item)
+      return "  " .. item
+    end,
+  }, function(choice)
+    if choice then
+      M.preview_cte(choice, function() end)
+    end
+  end)
 end
 
 return M
