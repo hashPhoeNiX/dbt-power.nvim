@@ -522,8 +522,7 @@ function M.parse_dbt_show_results(output)
   end
 
   -- Second pass: parse data rows, handling multiline values
-  -- Strategy: Reconstruct complete rows by counting pipes
-  local expected_pipes = #columns + 1  -- One pipe at start and end, plus one per column separator
+  -- Strategy: Accumulate lines and try to parse until we get the right number of columns
   local current_row_lines = {}
 
   for i = header_idx + 1, #lines do
@@ -540,48 +539,36 @@ function M.parse_dbt_show_results(output)
       goto continue_row_parse
     end
 
-    -- Count pipes in this line
-    local pipe_char = use_box_chars and "│" or "|"
-    local pipe_count = 0
-    if use_box_chars then
-      pipe_count = select(2, line:gsub("│", "│")) or 0
-    else
-      pipe_count = select(2, line:gsub("|", "|")) or 0
-    end
-
     -- Add line to current row
     table.insert(current_row_lines, line)
 
-    -- If we have enough pipes for a complete row, parse it
-    if pipe_count >= expected_pipes - 1 then
-      -- Collapse newlines into spaces to handle multiline values
-      local full_line = table.concat(current_row_lines, " "):gsub("%s+", " ")
-      local row = {}
+    -- Try to parse accumulated lines into columns
+    local full_line = table.concat(current_row_lines, " "):gsub("%s+", " ")
+    local row = {}
 
-      -- Parse the complete row - handle both box-drawing and pipe characters
-      if use_box_chars then
-        for value in full_line:gmatch("│([^│]+)") do
-          local trimmed = vim.trim(value)
-          -- Skip "..." truncation markers
-          if trimmed ~= "..." then
-            table.insert(row, trimmed)
-          end
-        end
-      else
-        for value in full_line:gmatch("|([^|]+)") do
-          local trimmed = vim.trim(value)
-          -- Skip "..." truncation markers
-          if trimmed ~= "..." then
-            table.insert(row, trimmed)
-          end
+    -- Parse the accumulated lines - handle both box-drawing and pipe characters
+    if use_box_chars then
+      for value in full_line:gmatch("│([^│]+)") do
+        local trimmed = vim.trim(value)
+        -- Skip "..." truncation markers
+        if trimmed ~= "..." then
+          table.insert(row, trimmed)
         end
       end
-
-      -- Accept if we have the right number of columns
-      if #row == #columns then
-        table.insert(rows, row)
-        current_row_lines = {}
+    else
+      for value in full_line:gmatch("|([^|]+)") do
+        local trimmed = vim.trim(value)
+        -- Skip "..." truncation markers
+        if trimmed ~= "..." then
+          table.insert(row, trimmed)
+        end
       end
+    end
+
+    -- If we now have the right number of columns, this row is complete
+    if #row == #columns then
+      table.insert(rows, row)
+      current_row_lines = {}
     end
 
     ::continue_row_parse::
