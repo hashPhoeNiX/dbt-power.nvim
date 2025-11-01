@@ -9,7 +9,7 @@ M.ns_id = vim.api.nvim_create_namespace("dbt_power_results")
 -- Configuration
 M.config = {
   max_rows = 500,
-  max_column_width = 50,
+  max_column_width = 20,  -- Reduced from 50 to make columns more compact
   style = "markdown",
 }
 
