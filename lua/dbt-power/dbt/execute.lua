@@ -468,9 +468,6 @@ function M.parse_dbt_show_results(output)
   local columns = {}
   local rows = {}
 
-  -- Debug: Log raw output
-  vim.notify("[dbt-power] Parsing output with " .. #lines .. " lines", vim.log.levels.DEBUG)
-
   -- Find header line (contains column names between pipes)
   local header_idx = nil
   for i, line in ipairs(lines) do
@@ -478,14 +475,12 @@ function M.parse_dbt_show_results(output)
       -- Check if this looks like a header row (not separator)
       if not line:match("^[%s%┏%┳%━]+$") and not line:match("^[%s%-%+]+$") then
         header_idx = i
-        vim.notify("[dbt-power] Found header at line " .. i .. ": " .. line:sub(1, 50), vim.log.levels.DEBUG)
         break
       end
     end
   end
 
   if not header_idx then
-    vim.notify("[dbt-power] No header found - returning empty results", vim.log.levels.WARN)
     return { columns = {}, rows = {} }
   end
 
@@ -502,8 +497,6 @@ function M.parse_dbt_show_results(output)
       table.insert(columns, vim.trim(col))
     end
   end
-
-  vim.notify("[dbt-power] Parsed " .. #columns .. " columns: " .. table.concat(columns, ", "), vim.log.levels.DEBUG)
 
   -- Parse data rows (skip separators and empty lines)
   for i = header_idx + 1, #lines do
@@ -532,15 +525,10 @@ function M.parse_dbt_show_results(output)
 
     if #row > 0 and #row == #columns then
       table.insert(rows, row)
-      vim.notify("[dbt-power] Added row with " .. #row .. " values", vim.log.levels.DEBUG)
-    elseif #row > 0 then
-      vim.notify("[dbt-power] Skipped row with " .. #row .. " values (expected " .. #columns .. ")", vim.log.levels.DEBUG)
     end
 
     ::continue::
   end
-
-  vim.notify("[dbt-power] Parsed " .. #rows .. " rows", vim.log.levels.DEBUG)
 
   return {
     columns = columns,
