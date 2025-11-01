@@ -464,7 +464,6 @@ end
 -- │ value1   │ value2    │
 -- └──────────┴───────────┘
 function M.parse_dbt_show_results(output)
-  local lines = vim.split(output, "\n")
   local columns = {}
   local rows = {}
 
@@ -473,13 +472,17 @@ function M.parse_dbt_show_results(output)
     return { columns = {}, rows = {} }
   end
 
-  -- Find header line (contains column names between pipes)
+  -- First pass: find and parse header line
+  local lines = vim.split(output, "\n")
   local header_idx = nil
+  local use_box_chars = false
+
   for i, line in ipairs(lines) do
     if line:match("┃") or line:match("|") then
       -- Check if this looks like a header row (not separator)
       if not line:match("^[%s%┏%┳%━]+$") and not line:match("^[%s%-%+]+$") then
         header_idx = i
+        use_box_chars = line:match("┃") ~= nil
         break
       end
     end
@@ -489,10 +492,12 @@ function M.parse_dbt_show_results(output)
     return { columns = {}, rows = {} }
   end
 
-  -- Parse header row (handles both pipe and box-drawing characters)
+  -- Parse header row
   local header_line = lines[header_idx]
-  if header_line:match("┃") then
-    -- Box-drawing format: ┃ col1 ┃ col2 ┃
+  local pipe_pattern
+  if use_box_chars then
+    pipe_pattern = "┃"
+    -- Use direct pattern for box-drawing character
     for col in header_line:gmatch("┃([^┃]+)") do
       local trimmed = vim.trim(col)
       -- Skip the "..." truncation marker
@@ -501,7 +506,8 @@ function M.parse_dbt_show_results(output)
       end
     end
   else
-    -- Pipe format: | col1 | col2 |
+    pipe_pattern = "|"
+    -- Use direct pattern for pipe
     for col in header_line:gmatch("|([^|]+)") do
       local trimmed = vim.trim(col)
       -- Skip the "..." truncation marker
@@ -511,63 +517,74 @@ function M.parse_dbt_show_results(output)
     end
   end
 
-  -- Debug: log header parsing
-  -- vim.notify("DEBUG: Found " .. #columns .. " columns", vim.log.levels.DEBUG)
+  if #columns == 0 then
+    return { columns = {}, rows = {} }
+  end
 
-  -- Parse data rows (skip separators and empty lines)
+  -- Second pass: parse data rows, handling multiline values
+  -- Strategy: Reconstruct complete rows by counting pipes
+  local expected_pipes = #columns + 1  -- One pipe at start and end, plus one per column separator
+  local current_row_lines = {}
+
   for i = header_idx + 1, #lines do
-    local line = vim.trim(lines[i])
+    local line = lines[i]
 
-    -- Skip separator lines (box-drawing or ASCII separators)
-    if line:match("^[┌┐└┘├┤┼─┬┴│%s]+$") or
-       line:match("^[%s%-%+|]+$") or
-       line == "" then
-      goto continue
+    -- Skip completely empty lines
+    if vim.trim(line) == "" then
+      goto continue_row_parse
     end
 
-    -- Parse data row
-    local row = {}
-    if line:match("│") then
-      -- Box-drawing format: │ val1 │ val2 │
-      local col_count = 0
-      for value in line:gmatch("│([^│]+)") do
-        col_count = col_count + 1
-        local trimmed = vim.trim(value)
-        -- Skip the "..." truncation marker at the end
-        if not (col_count > #columns and trimmed == "...") then
-          table.insert(row, trimmed)
+    -- Skip separator lines
+    if vim.trim(line):match("^[┌┐└┘├┤┼─┬┴│%s]+$") or
+       vim.trim(line):match("^[%s%-%+|]+$") then
+      goto continue_row_parse
+    end
+
+    -- Count pipes in this line
+    local pipe_char = use_box_chars and "│" or "|"
+    local pipe_count = 0
+    if use_box_chars then
+      pipe_count = select(2, line:gsub("│", "│")) or 0
+    else
+      pipe_count = select(2, line:gsub("|", "|")) or 0
+    end
+
+    -- Add line to current row
+    table.insert(current_row_lines, line)
+
+    -- If we have enough pipes for a complete row, parse it
+    if pipe_count >= expected_pipes - 1 then
+      -- Collapse newlines into spaces to handle multiline values
+      local full_line = table.concat(current_row_lines, " "):gsub("%s+", " ")
+      local row = {}
+
+      -- Parse the complete row - handle both box-drawing and pipe characters
+      if use_box_chars then
+        for value in full_line:gmatch("│([^│]+)") do
+          local trimmed = vim.trim(value)
+          -- Skip "..." truncation markers
+          if trimmed ~= "..." then
+            table.insert(row, trimmed)
+          end
+        end
+      else
+        for value in full_line:gmatch("|([^|]+)") do
+          local trimmed = vim.trim(value)
+          -- Skip "..." truncation markers
+          if trimmed ~= "..." then
+            table.insert(row, trimmed)
+          end
         end
       end
-    elseif line:match("|") then
-      -- Pipe format: | val1 | val2 |
-      local col_count = 0
-      for value in line:gmatch("|([^|]+)") do
-        col_count = col_count + 1
-        local trimmed = vim.trim(value)
-        -- Skip the "..." truncation marker at the end
-        if not (col_count > #columns and trimmed == "...") then
-          table.insert(row, trimmed)
-        end
+
+      -- Accept if we have the right number of columns
+      if #row == #columns then
+        table.insert(rows, row)
+        current_row_lines = {}
       end
     end
 
-    -- Accept row if it has at least one value and roughly matches column count
-    -- (be lenient with multiline JSON values that might break parsing)
-    if #row > 0 and #row >= math.max(1, #columns - 2) then
-      -- Pad with empty strings if we have fewer columns than expected
-      while #row < #columns do
-        table.insert(row, "")
-      end
-      -- Trim to exact column count if we have too many
-      if #row > #columns then
-        for i = #row, #columns + 1, -1 do
-          table.remove(row)
-        end
-      end
-      table.insert(rows, row)
-    end
-
-    ::continue::
+    ::continue_row_parse::
   end
 
   return {
