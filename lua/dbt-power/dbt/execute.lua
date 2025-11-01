@@ -468,6 +468,11 @@ function M.parse_dbt_show_results(output)
   local columns = {}
   local rows = {}
 
+  -- Debug: check if output is empty
+  if not output or output == "" then
+    return { columns = {}, rows = {} }
+  end
+
   -- Find header line (contains column names between pipes)
   local header_idx = nil
   for i, line in ipairs(lines) do
@@ -506,6 +511,9 @@ function M.parse_dbt_show_results(output)
     end
   end
 
+  -- Debug: log header parsing
+  -- vim.notify("DEBUG: Found " .. #columns .. " columns", vim.log.levels.DEBUG)
+
   -- Parse data rows (skip separators and empty lines)
   for i = header_idx + 1, #lines do
     local line = vim.trim(lines[i])
@@ -543,7 +551,19 @@ function M.parse_dbt_show_results(output)
       end
     end
 
-    if #row > 0 and #row == #columns then
+    -- Accept row if it has at least one value and roughly matches column count
+    -- (be lenient with multiline JSON values that might break parsing)
+    if #row > 0 and #row >= math.max(1, #columns - 2) then
+      -- Pad with empty strings if we have fewer columns than expected
+      while #row < #columns do
+        table.insert(row, "")
+      end
+      -- Trim to exact column count if we have too many
+      if #row > #columns then
+        for i = #row, #columns + 1, -1 do
+          table.remove(row)
+        end
+      end
       table.insert(rows, row)
     end
 
