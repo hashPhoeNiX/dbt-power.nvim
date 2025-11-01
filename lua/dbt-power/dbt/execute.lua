@@ -475,18 +475,21 @@ function M.parse_dbt_show_results(output)
     local row = {}
     if line:match("│") then
       -- Box-drawing format: │ val1 │ val2 │
-      for value in line:gmatch("│([^│]*)") do
+      for value in line:gmatch("│([^│]+)") do
         table.insert(row, vim.trim(value))
       end
     elseif line:match("|") then
       -- Pipe format: | val1 | val2 |
-      for value in line:gmatch("|([^|]*)") do
+      for value in line:gmatch("|([^|]+)") do
         table.insert(row, vim.trim(value))
       end
     end
 
     if #row > 0 and #row == #columns then
       table.insert(rows, row)
+      vim.notify("[dbt-power] Added row with " .. #row .. " values", vim.log.levels.DEBUG)
+    elseif #row > 0 then
+      vim.notify("[dbt-power] Skipped row with " .. #row .. " values (expected " .. #columns .. ")", vim.log.levels.DEBUG)
     end
 
     ::continue::
