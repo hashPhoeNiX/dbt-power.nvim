@@ -65,6 +65,9 @@ function M.show_results_in_buffer(results, title)
   -- Set buffer type
   vim.api.nvim_set_option_value("buftype", "nofile", { buf = current_buffer })
 
+  -- Set filetype to markdown so render-markdown can format it
+  vim.api.nvim_set_option_value("filetype", "markdown", { buf = current_buffer })
+
   -- Set buffer name
   vim.api.nvim_buf_set_name(current_buffer, "[dbt-power] Results")
 
@@ -91,64 +94,80 @@ function M.show_results_in_buffer(results, title)
   vim.cmd("wincmd p")
 end
 
--- Format results as markdown table (same as inline version)
+-- Format results as markdown table (proper markdown syntax for render-markdown)
 function M.format_results_as_markdown(results, title)
   local lines = {}
   local max_col_width = 50
 
-  -- Add empty line at top
-  table.insert(lines, "")
-
   -- Add title if provided
   if title then
-    table.insert(lines, title)
+    table.insert(lines, "## " .. title)
     table.insert(lines, "")
   end
 
   if not results.columns or #results.columns == 0 then
-    table.insert(lines, "[No data]")
+    table.insert(lines, "No data")
     return lines
   end
 
-  -- Header row
+  -- Calculate column widths based on content
+  local col_widths = {}
+  for i, col in ipairs(results.columns) do
+    local width = math.min(#tostring(col), max_col_width)
+    col_widths[i] = width
+  end
+
+  -- Check data rows to adjust widths
+  if results.rows and #results.rows > 0 then
+    for _, row in ipairs(results.rows) do
+      for i, val in ipairs(row) do
+        if i <= #results.columns then
+          local val_str = tostring(val or "NULL")
+          local width = math.min(#val_str, max_col_width)
+          col_widths[i] = math.max(col_widths[i] or 0, width)
+        end
+      end
+    end
+  end
+
+  -- Header row with proper spacing
   local header_parts = {}
-  for _, col in ipairs(results.columns) do
-    local col_name = M.truncate_string(tostring(col), max_col_width)
+  for i, col in ipairs(results.columns) do
+    local col_name = M.truncate_string(tostring(col), col_widths[i] or 20)
+    -- Pad to column width
+    col_name = col_name .. string.rep(" ", (col_widths[i] or 20) - #col_name)
     table.insert(header_parts, col_name)
   end
-  local header = "│ " .. table.concat(header_parts, " │ ") .. " │"
+  local header = "| " .. table.concat(header_parts, " | ") .. " |"
   table.insert(lines, header)
 
-  -- Separator row
+  -- Separator row (proper markdown syntax)
   local sep_parts = {}
-  for _ = 1, #results.columns do
-    table.insert(sep_parts, string.rep("─", max_col_width))
+  for i, _ in ipairs(results.columns) do
+    table.insert(sep_parts, string.rep("-", (col_widths[i] or 20) + 1))
   end
-  local separator = "├─" .. table.concat(sep_parts, "─┼─") .. "─┤"
+  local separator = "|" .. table.concat(sep_parts, "|") .. "|"
   table.insert(lines, separator)
 
-  -- Data rows
+  -- Data rows with proper spacing
   if results.rows and #results.rows > 0 then
-    for i, row in ipairs(results.rows) do
+    for _, row in ipairs(results.rows) do
       local row_parts = {}
-      for j, col in ipairs(results.columns) do
-        local value = M.truncate_string(tostring(row[j] or "NULL"), max_col_width)
+      for i, col in ipairs(results.columns) do
+        local value = M.truncate_string(tostring(row[i] or "NULL"), col_widths[i] or 20)
+        -- Pad to column width
+        value = value .. string.rep(" ", (col_widths[i] or 20) - #value)
         table.insert(row_parts, value)
       end
-      local row_str = "│ " .. table.concat(row_parts, " │ ") .. " │"
+      local row_str = "| " .. table.concat(row_parts, " | ") .. " |"
       table.insert(lines, row_str)
     end
   end
 
-  -- Bottom border
-  local bottom = "└─" .. table.concat(sep_parts, "─┴─") .. "─┘"
-  table.insert(lines, bottom)
-
   -- Row count info
   table.insert(lines, "")
-  local info = string.format("%d rows", #results.rows)
+  local info = string.format("**%d rows**", #results.rows)
   table.insert(lines, info)
-  table.insert(lines, "")
 
   return lines
 end
