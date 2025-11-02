@@ -11,31 +11,40 @@ function M.setup(config)
 end
 
 -- Extract CTEs from current SQL file
+-- Handles standard CTEs, extra whitespace/newlines, and Jinja2 templated CTEs like loop_{{ t }}
 function M.extract_ctes()
   local bufnr = vim.api.nvim_get_current_buf()
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local content = table.concat(lines, "\n")
 
   local ctes = {}
+  local seen = {}
 
-  -- Find all WITH clauses and extract CTE names
-  -- Pattern: WITH cte_name AS ( ... ), another_cte AS ( ... )
-  for cte_name in content:gmatch("WITH%s+(%w+)%s+AS") do
-    table.insert(ctes, cte_name)
+  -- Normalize content: collapse newlines and multiple spaces for robust matching
+  -- This handles cases like:
+  --   WITH
+  --   my_cte AS (...)
+  -- or loop_{{ t }} in Jinja2 loops
+  local normalized = content:gsub("\n", " "):gsub("%s+", " ")
+
+  -- Find all WITH clauses and extract CTE names (case-insensitive)
+  -- Uses lazy match (.-) to handle Jinja2 syntax like loop_{{ t }}
+  -- Pattern: WITH <cte_name> AS (where cte_name can include {{ }} and other chars)
+  for cte_name in normalized:gmatch("[Ww][Ii][Tt][Hh]%s+(.-)%s+[Aa][Ss]") do
+    cte_name = vim.trim(cte_name)
+    if cte_name ~= "" and not seen[cte_name] then
+      table.insert(ctes, cte_name)
+      seen[cte_name] = true
+    end
   end
 
-  -- Also match subsequent CTEs (after comma)
-  for cte_name in content:gmatch(",%s*(%w+)%s+AS") do
-    -- Only add if not already in list
-    local found = false
-    for _, existing in ipairs(ctes) do
-      if existing == cte_name then
-        found = true
-        break
-      end
-    end
-    if not found then
+  -- Also match subsequent CTEs (after comma, case-insensitive)
+  -- Same lazy match approach for consistency
+  for cte_name in normalized:gmatch(",%s*(.-)%s+[Aa][Ss]") do
+    cte_name = vim.trim(cte_name)
+    if cte_name ~= "" and not seen[cte_name] then
       table.insert(ctes, cte_name)
+      seen[cte_name] = true
     end
   end
 
