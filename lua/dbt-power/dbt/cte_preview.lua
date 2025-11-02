@@ -196,22 +196,19 @@ function M.wrap_cte_for_execution(full_sql, cte_name)
   -- Note: Don't include LIMIT in the query; use --limit flag instead
 
   -- Find the main SELECT at the end (after all WITH clauses)
-  -- Match the final SELECT statement and replace it
-
-  -- Look for the last SELECT statement that's not inside parentheses
-  -- Simple approach: find WHERE the last main SELECT starts
-
-  local with_end = full_sql:find("WITH%s+")
-  if not with_end then
+  -- Simple approach: find the position after WITH keyword
+  local with_pos = full_sql:find("WITH", 1, true)  -- plain text search
+  if not with_pos then
     -- No WITH clause, can't preview CTE
     return nil
   end
 
   -- Find the last SELECT in the query (the main one)
+  -- Start searching from after the WITH keyword
   local last_select = nil
-  local pos = with_end
+  local pos = with_pos
   while true do
-    local next_select = full_sql:find("SELECT%s+", pos)
+    local next_select = full_sql:find("SELECT", pos, true)  -- plain text search
     if not next_select then
       break
     end
