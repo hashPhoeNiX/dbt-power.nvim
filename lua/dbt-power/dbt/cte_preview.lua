@@ -28,9 +28,9 @@ function M.extract_ctes()
   local normalized = content:gsub("\n", " "):gsub("%s+", " ")
 
   -- Find all WITH clauses and extract CTE names (case-insensitive)
-  -- Uses lazy match (.-) to handle Jinja2 syntax like loop_{{ t }}
-  -- Pattern: WITH <cte_name> AS (where cte_name can include {{ }} and other chars)
-  for cte_name in normalized:gmatch("[Ww][Ii][Tt][Hh]%s+(.-)%s+[Aa][Ss]") do
+  -- Key: require AS followed by ( to match actual CTEs, not table aliases like "FROM table AS t"
+  -- Pattern: WITH <cte_name> AS ( where cte_name can include {{ }} and other chars
+  for cte_name in normalized:gmatch("[Ww][Ii][Tt][Hh]%s+(.+?)%s+[Aa][Ss]%s*%(" do
     cte_name = vim.trim(cte_name)
     if cte_name ~= "" and not seen[cte_name] then
       table.insert(ctes, cte_name)
@@ -39,8 +39,8 @@ function M.extract_ctes()
   end
 
   -- Also match subsequent CTEs (after comma, case-insensitive)
-  -- Same lazy match approach for consistency
-  for cte_name in normalized:gmatch(",%s*(.-)%s+[Aa][Ss]") do
+  -- Same requirement: AS followed by ( to avoid matching table aliases
+  for cte_name in normalized:gmatch(",%s*(.+?)%s+[Aa][Ss]%s*%(" do
     cte_name = vim.trim(cte_name)
     if cte_name ~= "" and not seen[cte_name] then
       table.insert(ctes, cte_name)
