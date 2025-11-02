@@ -191,23 +191,46 @@ end
 
 -- Wrap CTE in SELECT * to execute just that CTE
 function M.wrap_cte_for_execution(full_sql, cte_name)
-  -- Strategy: Find the last main SELECT and replace it with SELECT * FROM cte_name
-  -- This preserves all WITH clauses
+  -- Replace the final SELECT with SELECT * FROM cte_name
+  -- This keeps all the WITH clauses intact
+  -- Note: Don't include LIMIT in the query; use --limit flag instead
 
-  -- Convert to lowercase for case-insensitive search
-  local sql_lower = full_sql:lower()
+  -- Find the main SELECT at the end (after all WITH clauses)
+  -- Match the final SELECT statement and replace it
 
-  -- Find WITH keyword (case-insensitive)
-  local with_pos = sql_lower:find("with", 1, true)
-  if not with_pos then
+  -- Look for the last SELECT statement that's not inside parentheses
+  -- Simple approach: find WHERE the last main SELECT starts
+
+  -- Search for WITH/with (case-insensitive helper)
+  local function find_keyword(sql, keyword, start_pos)
+    local pos = start_pos or 1
+    while pos <= #sql do
+      local upper_pos = sql:find(keyword:upper(), pos)
+      local lower_pos = sql:find(keyword:lower(), pos)
+      if upper_pos and lower_pos then
+        return math.min(upper_pos, lower_pos)
+      elseif upper_pos then
+        return upper_pos
+      elseif lower_pos then
+        return lower_pos
+      else
+        return nil
+      end
+    end
     return nil
   end
 
-  -- Find all SELECT keywords (case-insensitive)
+  local with_end = find_keyword(full_sql, "WITH")
+  if not with_end then
+    -- No WITH clause, can't preview CTE
+    return nil
+  end
+
+  -- Find the last SELECT in the query (the main one)
   local last_select = nil
-  local pos = with_pos
+  local pos = with_end
   while true do
-    local next_select = sql_lower:find("select", pos, true)
+    local next_select = find_keyword(full_sql, "SELECT", pos)
     if not next_select then
       break
     end
@@ -219,10 +242,10 @@ function M.wrap_cte_for_execution(full_sql, cte_name)
     return nil
   end
 
-  -- Extract everything up to the final SELECT (from original SQL, not lowercase)
+  -- Extract everything up to the final SELECT
   local before_final_select = full_sql:sub(1, last_select - 1)
 
-  -- Append SELECT * FROM cte_name
+  -- Append SELECT * FROM cte_name (without LIMIT - it's handled via --limit flag)
   return before_final_select .. "SELECT * FROM " .. cte_name
 end
 
