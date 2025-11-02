@@ -133,8 +133,14 @@ function M.preview_cte(cte_name, callback)
           return
         end
 
-        -- Debug: log the query being executed
-        vim.notify("[dbt-power] Executing CTE query with " .. cte_name, vim.log.levels.INFO)
+        -- Debug: save query to temp file to see what we're executing
+        local temp_query_file = vim.fn.tempname() .. "_cte_" .. cte_name .. ".sql"
+        local qf = io.open(temp_query_file, "w")
+        if qf then
+          qf:write(cte_query)
+          qf:close()
+          vim.notify("[dbt-power] CTE query saved to: " .. temp_query_file, vim.log.levels.INFO)
+        end
 
         -- Execute the CTE query
         local limit = M.config.inline_results and M.config.inline_results.max_rows or 500
