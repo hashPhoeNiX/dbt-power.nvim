@@ -191,24 +191,23 @@ end
 
 -- Wrap CTE in SELECT * to execute just that CTE
 function M.wrap_cte_for_execution(full_sql, cte_name)
-  -- Replace the final SELECT with SELECT * FROM cte_name
-  -- This keeps all the WITH clauses intact
-  -- Note: Don't include LIMIT in the query; use --limit flag instead
+  -- Strategy: Find the last main SELECT and replace it with SELECT * FROM cte_name
+  -- This preserves all WITH clauses
 
-  -- Find the main SELECT at the end (after all WITH clauses)
-  -- Simple approach: find the position after WITH keyword
-  local with_pos = full_sql:find("WITH", 1, true)  -- plain text search
+  -- Convert to lowercase for case-insensitive search
+  local sql_lower = full_sql:lower()
+
+  -- Find WITH keyword (case-insensitive)
+  local with_pos = sql_lower:find("with", 1, true)
   if not with_pos then
-    -- No WITH clause, can't preview CTE
     return nil
   end
 
-  -- Find the last SELECT in the query (the main one)
-  -- Start searching from after the WITH keyword
+  -- Find all SELECT keywords (case-insensitive)
   local last_select = nil
   local pos = with_pos
   while true do
-    local next_select = full_sql:find("SELECT", pos, true)  -- plain text search
+    local next_select = sql_lower:find("select", pos, true)
     if not next_select then
       break
     end
@@ -220,10 +219,10 @@ function M.wrap_cte_for_execution(full_sql, cte_name)
     return nil
   end
 
-  -- Extract everything up to the final SELECT
+  -- Extract everything up to the final SELECT (from original SQL, not lowercase)
   local before_final_select = full_sql:sub(1, last_select - 1)
 
-  -- Append SELECT * FROM cte_name (without LIMIT - it's handled via --limit flag)
+  -- Append SELECT * FROM cte_name
   return before_final_select .. "SELECT * FROM " .. cte_name
 end
 
