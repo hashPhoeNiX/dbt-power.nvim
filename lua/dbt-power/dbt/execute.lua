@@ -151,7 +151,7 @@ function M.execute_with_dbt_show_command()
   end)
 end
 
--- Execute visual selection
+-- Execute visual selection by creating a temporary ad-hoc model
 function M.execute_selection()
   local bufnr = vim.api.nvim_get_current_buf()
 
@@ -208,18 +208,56 @@ function M.execute_selection()
     selected_sql = M.wrap_with_limit(selected_sql, limit)
   end
 
-  -- Execute via vim-dadbod
-  M.execute_via_dadbod(selected_sql, function(results)
+  -- Create a temporary ad-hoc model from the selection
+  local project_root = require("dbt-power.utils.project").find_dbt_project()
+  if not project_root then
+    vim.notify("[dbt-power] Could not find dbt project root", vim.log.levels.ERROR)
+    return
+  end
+
+  -- Create adhoc directory if it doesn't exist
+  local adhoc_dir = project_root .. "/models/adhoc"
+  local stat = vim.fn.getfperm(adhoc_dir)
+  if stat == "" then
+    vim.fn.mkdir(adhoc_dir, "p")
+  end
+
+  -- Generate filename with timestamp for uniqueness
+  local timestamp = os.date("%Y%m%d_%H%M%S")
+  local micro = math.floor(vim.loop.hrtime() / 1000) % 1000
+  local model_name = "adhoc_selection_" .. timestamp .. "_" .. string.format("%03d", micro)
+  local model_path = adhoc_dir .. "/" .. model_name .. ".sql"
+
+  -- Write the selected SQL to the temporary model
+  local file = io.open(model_path, "w")
+  if not file then
+    vim.notify("[dbt-power] Failed to create temporary model file", vim.log.levels.ERROR)
+    return
+  end
+
+  file:write(string.format("-- Temporary ad-hoc model from visual selection\n-- %s\n\n%s\n", os.date("%Y-%m-%d %H:%M:%S"), selected_sql))
+  file:close()
+
+  -- Execute the ad-hoc model using dbt show
+  M.execute_with_dbt_show(project_root, model_name, function(results)
     if results.error then
-      vim.notify("[dbt-power] Error: " .. results.error, vim.log.levels.ERROR)
+      M.show_error_details("dbt show execution failed for selection", results.error)
+      -- Clean up the temporary file on error
+      os.remove(model_path)
       return
     end
 
+    -- Display results inline
     inline_results.display_query_results(bufnr, cursor_line, results)
     vim.notify(
-      string.format("[dbt-power] Executed successfully (%d rows)", #results.rows),
+      string.format("[dbt-power] Selection executed successfully (%d rows)", #results.rows),
       vim.log.levels.INFO
     )
+
+    -- Clean up the temporary file after execution
+    vim.schedule(function()
+      os.remove(model_path)
+    end)
   end)
 end
 
