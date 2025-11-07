@@ -78,6 +78,10 @@ function M.create_commands()
   vim.api.nvim_create_user_command("DbtToggleAutoCompile", function()
     require("dbt-power.preview").toggle_auto_compile()
   end, { desc = "Toggle auto-compile preview" })
+
+  vim.api.nvim_create_user_command("DbtAdHoc", function()
+    require("dbt-power.dbt.adhoc").create_adhoc_model()
+  end, { desc = "Create a temporary ad-hoc dbt model for testing" })
 end
 
 -- Create autocommands

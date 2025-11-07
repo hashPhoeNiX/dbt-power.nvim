@@ -7,6 +7,7 @@ M.config = {}
 M.auto_compile_enabled = false
 M.preview_bufnr = nil
 M.preview_winid = nil
+M.preview_model_name = nil  -- Store model name for execution from preview buffer
 
 function M.setup(config)
   M.config = config or {}
@@ -19,6 +20,9 @@ function M.show_compiled_sql()
     vim.notify("[dbt-power] Not in a dbt model", vim.log.levels.WARN)
     return
   end
+
+  -- Store model name for later execution from preview buffer
+  M.preview_model_name = model_name
 
   vim.notify("[dbt-power] Compiling " .. model_name .. "...", vim.log.levels.INFO)
 

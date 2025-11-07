@@ -48,43 +48,53 @@ end
 -- Execute current model with results in buffer (BUFFER OUTPUT METHOD)
 -- Display results in a split window instead of inline
 function M.execute_with_dbt_show_buffer()
-  -- Check if we're in a dbt model file
+  local bufnr = vim.api.nvim_get_current_buf()
   local filepath = vim.fn.expand("%:p")
 
-  if filepath:match("%.sql$") then
-    -- Get model name and project root
-    local model_name = M.get_model_name()
-    local project_root = require("dbt-power.utils.project").find_dbt_project()
+  local model_name = nil
 
-    if not model_name or not project_root then
-      vim.notify("[dbt-power] Could not determine model name or project root", vim.log.levels.ERROR)
+  -- Check if we're in a dbt model file
+  if filepath:match("%.sql$") then
+    model_name = M.get_model_name()
+  else
+    -- Check if we're in the preview buffer and use stored model name
+    local compile = require("dbt-power.dbt.compile")
+    if compile.preview_model_name and compile.preview_bufnr == bufnr then
+      model_name = compile.preview_model_name
+    end
+  end
+
+  if not model_name then
+    vim.notify("[dbt-power] Not in a dbt model file (.sql) or preview buffer", vim.log.levels.WARN)
+    return
+  end
+
+  local project_root = require("dbt-power.utils.project").find_dbt_project()
+  if not project_root then
+    vim.notify("[dbt-power] Could not find dbt project root", vim.log.levels.ERROR)
+    return
+  end
+
+  -- Show loading indicator
+  local buffer_output = require("dbt-power.ui.buffer_output")
+  buffer_output.show_loading("[dbt-power] Executing " .. model_name .. "...")
+
+  -- Use dbt show approach
+  M.execute_with_dbt_show(project_root, model_name, function(results)
+    if results.error then
+      buffer_output.clear_loading()
+      M.show_error_details("dbt show execution failed for model: " .. model_name, results.error)
       return
     end
 
-    -- Show loading indicator
-    local buffer_output = require("dbt-power.ui.buffer_output")
-    buffer_output.show_loading("[dbt-power] Executing " .. model_name .. "...")
+    -- Display in buffer instead of inline
+    buffer_output.show_results_in_buffer(results, "Model: " .. model_name)
 
-    -- Use dbt show approach
-    M.execute_with_dbt_show(project_root, model_name, function(results)
-      if results.error then
-        vim.notify("[dbt-power] Error: " .. results.error, vim.log.levels.ERROR)
-        buffer_output.clear_loading()
-        return
-      end
-
-      -- Display in buffer instead of inline
-      buffer_output.show_results_in_buffer(results, "Model: " .. model_name)
-
-      vim.notify(
-        string.format("[dbt-power] Executed successfully (%d rows)", #results.rows),
-        vim.log.levels.INFO
-      )
-    end)
-  else
-    -- Not in a model file - show message
-    vim.notify("[dbt-power] Not in a dbt model file (.sql)", vim.log.levels.WARN)
-  end
+    vim.notify(
+      string.format("[dbt-power] Executed successfully (%d rows)", #results.rows),
+      vim.log.levels.INFO
+    )
+  end)
 end
 
 -- Execute current model using dbt show (ALTERNATIVE METHOD)
@@ -96,58 +106,93 @@ function M.execute_with_dbt_show_command()
   -- Clear previous results at this line
   inline_results.clear_at_line(bufnr, cursor_line)
 
+  local filepath = vim.fn.expand("%:p")
+  local model_name = nil
+
+  -- Check if we're in a dbt model file
+  if filepath:match("%.sql$") then
+    model_name = M.get_model_name()
+  else
+    -- Check if we're in the preview buffer and use stored model name
+    local compile = require("dbt-power.dbt.compile")
+    if compile.preview_model_name and compile.preview_bufnr == bufnr then
+      model_name = compile.preview_model_name
+    end
+  end
+
+  if not model_name then
+    vim.notify("[dbt-power] Not in a dbt model file (.sql) or preview buffer", vim.log.levels.WARN)
+    return
+  end
+
+  local project_root = require("dbt-power.utils.project").find_dbt_project()
+  if not project_root then
+    vim.notify("[dbt-power] Could not find dbt project root", vim.log.levels.ERROR)
+    return
+  end
+
   -- Show loading indicator
-  local model_name = M.get_model_name()
-  vim.notify("[dbt-power] Executing " .. (model_name or "query") .. "...", vim.log.levels.INFO, {
+  vim.notify("[dbt-power] Executing " .. model_name .. "...", vim.log.levels.INFO, {
     timeout = 0,  -- Don't auto-dismiss while waiting
   })
 
-  -- Check if we're in a dbt model file
-  local filepath = vim.fn.expand("%:p")
-
-  if filepath:match("%.sql$") then
-    -- Get model name and project root
-    local model_name = M.get_model_name()
-    local project_root = require("dbt-power.utils.project").find_dbt_project()
-
-    if not model_name or not project_root then
-      vim.notify("[dbt-power] Could not determine model name or project root", vim.log.levels.ERROR)
+  -- Use dbt show approach
+  M.execute_with_dbt_show(project_root, model_name, function(results)
+    if results.error then
+      M.show_error_details("dbt show execution failed for model: " .. model_name, results.error)
       return
     end
 
-    -- Use dbt show approach
-    M.execute_with_dbt_show(project_root, model_name, function(results)
-      if results.error then
-        vim.notify("[dbt-power] Error: " .. results.error, vim.log.levels.ERROR)
-        return
-      end
-
-      inline_results.display_query_results(bufnr, cursor_line, results)
-      vim.notify(
-        string.format("[dbt-power] Executed successfully (%d rows)", #results.rows),
-        vim.log.levels.INFO
-      )
-    end)
-  else
-    -- Not in a model file - show message
-    vim.notify("[dbt-power] Not in a dbt model file (.sql)", vim.log.levels.WARN)
-  end
+    inline_results.display_query_results(bufnr, cursor_line, results)
+    vim.notify(
+      string.format("[dbt-power] Executed successfully (%d rows)", #results.rows),
+      vim.log.levels.INFO
+    )
+  end)
 end
 
 -- Execute visual selection
 function M.execute_selection()
   local bufnr = vim.api.nvim_get_current_buf()
-  local start_line = vim.fn.getpos("'<")[2] - 1
-  local end_line = vim.fn.getpos("'>")[2]
 
-  -- Get selected text
-  local selected_lines = vim.api.nvim_buf_get_lines(bufnr, start_line, end_line, false)
-  if #selected_lines == 0 then
-    vim.notify("[dbt-power] No selection", vim.log.levels.WARN)
+  -- Get visual selection using marks (more reliable)
+  local start_pos = vim.fn.getpos("'<")
+  local end_pos = vim.fn.getpos("'>")
+
+  if start_pos[2] == 0 or end_pos[2] == 0 then
+    vim.notify("[dbt-power] No selection found. Use visual mode (v) to select SQL", vim.log.levels.WARN)
     return
   end
 
-  local selected_sql = table.concat(selected_lines, "\n")
+  local start_line = start_pos[2] - 1  -- 0-indexed
+  local end_line = end_pos[2]
+  local start_col = start_pos[3] - 1
+  local end_col = end_pos[3]
+
+  -- Get selected lines
+  local selected_lines = vim.api.nvim_buf_get_lines(bufnr, start_line, end_line, false)
+  if #selected_lines == 0 then
+    vim.notify("[dbt-power] Could not retrieve selected text", vim.log.levels.WARN)
+    return
+  end
+
+  -- Handle multi-line selection
+  local selected_sql
+  if #selected_lines == 1 then
+    -- Single line: extract from start_col to end_col
+    selected_sql = selected_lines[1]:sub(start_col + 1, end_col)
+  else
+    -- Multi-line: first line from start_col, last line to end_col
+    selected_lines[1] = selected_lines[1]:sub(start_col + 1)
+    selected_lines[#selected_lines] = selected_lines[#selected_lines]:sub(1, end_col)
+    selected_sql = table.concat(selected_lines, "\n")
+  end
+
+  if vim.trim(selected_sql) == "" then
+    vim.notify("[dbt-power] Selection is empty", vim.log.levels.WARN)
+    return
+  end
+
   local cursor_line = start_line
 
   -- Clear previous results
@@ -230,7 +275,12 @@ function M.compile_dbt_model(project_root, model_name, callback)
       vim.schedule(function()
         if return_val ~= 0 then
           local stderr = table.concat(j:stderr_result(), "\n")
-          vim.notify("[dbt-power] Compile failed: " .. stderr, vim.log.levels.WARN)
+          local stdout = table.concat(j:result(), "\n")
+          local full_output = stderr
+          if stdout ~= "" then
+            full_output = stdout .. "\n" .. stderr
+          end
+          M.show_error_details("dbt compile failed for model: " .. model_name, full_output)
           callback(nil)
           return
         end
@@ -352,8 +402,13 @@ function M.execute_via_dadbod(sql, callback)
 
         if return_val ~= 0 then
           local stderr = table.concat(j:stderr_result(), "\n")
+          local stdout = table.concat(j:result(), "\n")
           os.remove(output_file)
-          callback({ error = "Database query failed: " .. stderr })
+          local full_output = stderr
+          if stdout ~= "" then
+            full_output = stdout .. "\n" .. stderr
+          end
+          callback({ error = "Database query failed:\n" .. full_output })
           return
         end
 
@@ -437,16 +492,58 @@ function M.execute_with_dbt_show(project_root, model_name, callback)
       vim.schedule(function()
         if return_val ~= 0 then
           local stderr = table.concat(j:stderr_result(), "\n")
-          callback({ error = "dbt show failed: " .. stderr })
+          local stdout = table.concat(j:result(), "\n")
+          local full_output = stderr
+          if stdout ~= "" then
+            full_output = stdout .. "\n" .. stderr
+          end
+          callback({ error = full_output })
           return
         end
 
         -- Parse results from dbt show output
+        -- Combine stdout and stderr since dbt Cloud CLI might write to both
         local stdout = table.concat(j:result(), "\n")
-        local results = M.parse_dbt_show_results(stdout)
+        local stderr = table.concat(j:stderr_result(), "\n")
+        local full_output = stdout
+        if stderr ~= "" then
+          full_output = stdout .. "\n" .. stderr
+        end
+
+        -- FIRST: Check if output contains a dbt error (before trying to parse as table)
+        if full_output:match("Encountered an error:") then
+          -- Extract error section between "Encountered an error:" and "Invocation has finished"
+          local error_section = ""
+          local lines = vim.split(full_output, "\n")
+          local in_error = false
+          for _, line in ipairs(lines) do
+            if line:match("Encountered an error:") then
+              in_error = true
+            end
+            if in_error then
+              error_section = error_section .. line .. "\n"
+              if line:match("Invocation has finished") then
+                break
+              end
+            end
+          end
+          callback({ error = error_section })
+          return
+        end
+
+        -- SECOND: Parse as table results
+        local results = M.parse_dbt_show_results(full_output)
 
         if not results.columns or #results.columns == 0 then
-          callback({ error = "No results returned from model" })
+          -- No error found and no columns parsed - show debug message
+          local debug_msg = "Parser could not find columns in dbt show output.\n\n"
+          debug_msg = debug_msg .. "Total output length: " .. #full_output .. " chars\n\n"
+          debug_msg = debug_msg .. "Raw output (first 1500 chars):\n"
+          debug_msg = debug_msg .. full_output:sub(1, 1500)
+          if #full_output > 1500 then
+            debug_msg = debug_msg .. "\n... (truncated)\n\nCheck :messages for debug info"
+          end
+          callback({ error = debug_msg })
           return
         end
 
@@ -474,10 +571,26 @@ function M.parse_dbt_show_results(output)
 
   -- First pass: find and parse header line
   local lines = vim.split(output, "\n")
+
+  -- Skip dbt Cloud CLI logging lines at the beginning
+  -- Look for lines that contain actual table content (pipes or box drawing chars)
+  local table_start_idx = 1
+  for i, line in ipairs(lines) do
+    -- Skip logging lines (Sending, Created, Waiting, Streaming, Running, Downloading, Invocation)
+    if line:match("^[A-Za-z]") and not line:match("[┃│┏┓┐└┘├┤┼─┬┴┳┲┪┨┦|%-+%s]") then
+      table_start_idx = i + 1
+    elseif line:match("[┃│|]") then
+      -- Found start of table
+      table_start_idx = i
+      break
+    end
+  end
+
   local header_idx = nil
   local use_box_chars = false
 
-  for i, line in ipairs(lines) do
+  for i = table_start_idx, #lines do
+    local line = lines[i]
     if line:match("┃") or line:match("|") then
       -- Check if this looks like a header row (not separator)
       if not line:match("^[%s%┏%┳%━]+$") and not line:match("^[%s%-%+]+$") then
@@ -526,6 +639,10 @@ function M.parse_dbt_show_results(output)
   local current_row_lines = {}
 
   for i = header_idx + 1, #lines do
+    -- Make sure we're still in the table section
+    if i > header_idx + 1000 then
+      break  -- Safety check to avoid parsing too far
+    end
     local line = lines[i]
 
     -- Skip completely empty lines
@@ -587,6 +704,85 @@ function M.get_model_name()
     return nil
   end
   return filepath
+end
+
+-- Show error details in a popup or buffer
+-- Extracts key error information and displays it prominently
+function M.show_error_details(title, error_output)
+  -- Parse error output to extract key information
+  local lines = vim.split(error_output, "\n")
+
+  -- Special handling for dbt Cloud CLI output: extract error between "Encountered an error:" and "Invocation has finished"
+  local error_lines = {}
+  local in_error_section = false
+  local found_dbt_error = false
+
+  for i, line in ipairs(lines) do
+    -- Check for dbt Cloud error section
+    if line:match("Encountered an error:") then
+      found_dbt_error = true
+      in_error_section = true
+      table.insert(error_lines, line)
+    elseif in_error_section and line:match("Invocation has finished") then
+      -- End of error section
+      break
+    elseif in_error_section then
+      if vim.trim(line) ~= "" then
+        table.insert(error_lines, vim.trim(line))
+      end
+    end
+  end
+
+  -- If we didn't find a dbt Cloud error section, look for general error patterns
+  if not found_dbt_error then
+    for _, line in ipairs(lines) do
+      if line:match("Error") or line:match("ERROR") or line:match("error") then
+        if vim.trim(line) ~= "" then
+          table.insert(error_lines, vim.trim(line))
+        end
+        -- Collect up to 15 error-related lines
+        if #error_lines >= 15 then
+          break
+        end
+      end
+    end
+  end
+
+  -- If still no error lines found, show the first non-empty lines
+  if #error_lines == 0 then
+    for i = 1, math.min(10, #lines) do
+      if vim.trim(lines[i]) ~= "" then
+        table.insert(error_lines, vim.trim(lines[i]))
+      end
+    end
+  end
+
+  -- Format error message with context
+  local error_message = title .. "\n\n" .. table.concat(error_lines, "\n")
+
+  -- Show as error notification with long timeout
+  vim.notify(error_message, vim.log.levels.ERROR, {
+    title = "dbt-power Error",
+    timeout = 0,  -- Don't auto-dismiss
+  })
+
+  -- Also open a quickfix list with the full error for easy reference
+  local qf_list = {}
+  for i, line in ipairs(lines) do
+    if vim.trim(line) ~= "" then
+      table.insert(qf_list, {
+        text = line,
+        lnum = i,
+        col = 1,
+      })
+    end
+  end
+
+  if #qf_list > 0 then
+    vim.fn.setqflist(qf_list)
+    -- Optional: automatically open quickfix window
+    -- vim.cmd("copen")
+  end
 end
 
 return M
