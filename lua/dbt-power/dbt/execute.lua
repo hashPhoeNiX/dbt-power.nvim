@@ -215,8 +215,9 @@ function M.execute_selection()
   local sql_upper = selected_sql:upper()
   if not sql_upper:match("LIMIT") and not sql_upper:match("GROUP BY") then
     local limit = M.config.inline_results.max_rows or 500
-    -- Add LIMIT on a new line for clarity and better SQL compatibility
-    selected_sql = selected_sql .. "\nLIMIT " .. limit
+    -- Wrap with CTE or subquery to ensure LIMIT is applied cleanly
+    -- This handles Jinja2 expansions (like {{ source() }}) that may not preserve newlines
+    selected_sql = "WITH cte AS (\n  " .. selected_sql .. "\n)\nSELECT * FROM cte\nLIMIT " .. limit
   end
 
   -- Create a temporary ad-hoc model from the selection
