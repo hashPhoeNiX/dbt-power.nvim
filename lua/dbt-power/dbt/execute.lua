@@ -205,11 +205,18 @@ function M.execute_selection()
   -- Show loading indicator
   vim.notify("[dbt-power] Executing selection...", vim.log.levels.INFO)
 
-  -- Add LIMIT if not present
+  -- Trim the selected SQL and ensure it's clean
+  selected_sql = vim.trim(selected_sql)
+
+  -- Remove trailing semicolon if present
+  selected_sql = selected_sql:gsub("%s*;%s*$", "")
+
+  -- Add LIMIT on new line if not already present and no GROUP BY
   local sql_upper = selected_sql:upper()
-  if not sql_upper:match("LIMIT") then
+  if not sql_upper:match("LIMIT") and not sql_upper:match("GROUP BY") then
     local limit = M.config.inline_results.max_rows or 500
-    selected_sql = M.wrap_with_limit(selected_sql, limit)
+    -- Add LIMIT on a new line for clarity and better SQL compatibility
+    selected_sql = selected_sql .. "\nLIMIT " .. limit
   end
 
   -- Create a temporary ad-hoc model from the selection
