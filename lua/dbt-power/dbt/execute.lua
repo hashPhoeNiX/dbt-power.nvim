@@ -236,9 +236,6 @@ function M.execute_selection()
   local model_name = "adhoc_selection_" .. timestamp .. "_" .. string.format("%03d", micro)
   local model_path = adhoc_dir .. "/" .. model_name .. ".sql"
 
-  -- DEBUG: Show the generated SQL
-  vim.notify("[dbt-power] Generated SQL for " .. model_name .. ":\n\n" .. selected_sql, vim.log.levels.INFO)
-
   -- Write the selected SQL to the temporary model
   local file = io.open(model_path, "w")
   if not file then
@@ -249,10 +246,6 @@ function M.execute_selection()
   local final_content = string.format("-- Temporary ad-hoc model from visual selection\n-- %s\n\n%s\n", os.date("%Y-%m-%d %H:%M:%S"), selected_sql)
   file:write(final_content)
   file:close()
-
-  -- DEBUG: Show file path and content
-  vim.notify("[dbt-power] File written to: " .. model_path, vim.log.levels.INFO)
-  vim.notify("[dbt-power] File content:\n\n" .. final_content, vim.log.levels.DEBUG)
 
   -- Execute the ad-hoc model using dbt show
   M.execute_with_dbt_show(project_root, model_name, function(results)
