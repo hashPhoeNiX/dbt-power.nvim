@@ -211,14 +211,10 @@ function M.execute_selection()
   -- Remove trailing semicolon if present
   selected_sql = selected_sql:gsub("%s*;%s*$", "")
 
-  -- Add LIMIT on new line if not already present and no GROUP BY
-  local sql_upper = selected_sql:upper()
-  if not sql_upper:match("LIMIT") and not sql_upper:match("GROUP BY") then
-    local limit = M.config.inline_results.max_rows or 500
-    -- Wrap with CTE or subquery to ensure LIMIT is applied cleanly
-    -- This handles Jinja2 expansions (like {{ source() }}) that may not preserve newlines
-    selected_sql = "WITH cte AS (\n  " .. selected_sql .. "\n)\nSELECT * FROM cte\nLIMIT " .. limit
-  end
+  -- Wrap with CTE to ensure proper SQL structure
+  -- This handles Jinja2 expansions (like {{ source() }}) and ensures clean syntax
+  -- Don't add LIMIT here - models shouldn't have result limits, just execute and return data
+  selected_sql = "WITH cte AS (\n  " .. selected_sql .. "\n)\nSELECT * FROM cte"
 
   -- Create a temporary ad-hoc model from the selection
   local project_root = require("dbt-power.utils.project").find_dbt_project()
