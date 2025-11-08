@@ -155,45 +155,49 @@ end
 function M.execute_selection()
   local bufnr = vim.api.nvim_get_current_buf()
 
-  -- Get visual selection using marks (more reliable)
+  -- Try to get visual selection using marks
   local start_pos = vim.fn.getpos("'<")
   local end_pos = vim.fn.getpos("'>")
 
-  if start_pos[2] == 0 or end_pos[2] == 0 then
+  local selected_sql = nil
+  local cursor_line = 0
+
+  if start_pos[2] ~= 0 and end_pos[2] ~= 0 then
+    -- Marks are available
+    local start_line = start_pos[2] - 1  -- 0-indexed
+    local end_line = end_pos[2]
+    local start_col = start_pos[3] - 1
+    local end_col = end_pos[3]
+
+    -- Get selected lines
+    local selected_lines = vim.api.nvim_buf_get_lines(bufnr, start_line, end_line, false)
+    if #selected_lines > 0 then
+      -- Handle multi-line selection
+      if #selected_lines == 1 then
+        -- Single line: extract from start_col to end_col
+        selected_sql = selected_lines[1]:sub(start_col + 1, end_col)
+      else
+        -- Multi-line: first line from start_col, last line to end_col
+        selected_lines[1] = selected_lines[1]:sub(start_col + 1)
+        selected_lines[#selected_lines] = selected_lines[#selected_lines]:sub(1, end_col)
+        selected_sql = table.concat(selected_lines, "\n")
+      end
+      cursor_line = start_line
+    end
+  end
+
+  -- Fallback: try to get selection from unnamed register
+  if not selected_sql or vim.trim(selected_sql) == "" then
+    -- Copy visual selection to unnamed register
+    vim.cmd("noautocmd normal! \"vy\"")
+    selected_sql = vim.fn.getreg('"')
+    cursor_line = vim.fn.getcmdpos() - 1
+  end
+
+  if not selected_sql or vim.trim(selected_sql) == "" then
     vim.notify("[dbt-power] No selection found. Use visual mode (v) to select SQL", vim.log.levels.WARN)
     return
   end
-
-  local start_line = start_pos[2] - 1  -- 0-indexed
-  local end_line = end_pos[2]
-  local start_col = start_pos[3] - 1
-  local end_col = end_pos[3]
-
-  -- Get selected lines
-  local selected_lines = vim.api.nvim_buf_get_lines(bufnr, start_line, end_line, false)
-  if #selected_lines == 0 then
-    vim.notify("[dbt-power] Could not retrieve selected text", vim.log.levels.WARN)
-    return
-  end
-
-  -- Handle multi-line selection
-  local selected_sql
-  if #selected_lines == 1 then
-    -- Single line: extract from start_col to end_col
-    selected_sql = selected_lines[1]:sub(start_col + 1, end_col)
-  else
-    -- Multi-line: first line from start_col, last line to end_col
-    selected_lines[1] = selected_lines[1]:sub(start_col + 1)
-    selected_lines[#selected_lines] = selected_lines[#selected_lines]:sub(1, end_col)
-    selected_sql = table.concat(selected_lines, "\n")
-  end
-
-  if vim.trim(selected_sql) == "" then
-    vim.notify("[dbt-power] Selection is empty", vim.log.levels.WARN)
-    return
-  end
-
-  local cursor_line = start_line
 
   -- Clear previous results
   inline_results.clear_at_line(bufnr, cursor_line)
