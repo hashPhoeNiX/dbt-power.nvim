@@ -55,10 +55,78 @@ function M.setup(opts)
   -- Set up commands
   M.create_commands()
 
+  -- Set up keymaps
+  M.create_keymaps()
+
   -- Set up autocommands
   M.create_autocommands()
 
   print("[dbt-power] Plugin initialized")
+end
+
+-- Create keymaps based on configuration
+function M.create_keymaps()
+  local km = M.config.keymaps
+  if not km then return end
+
+  -- Compile preview
+  if km.compile_preview then
+    vim.keymap.set("n", km.compile_preview, function()
+      require("dbt-power.preview").show_compiled_sql()
+    end, { desc = "Preview compiled SQL", noremap = true, silent = false })
+  end
+
+  -- Execute with dbt show - inline results
+  vim.keymap.set("n", "<leader>ds", function()
+    require("dbt-power.execute").execute_with_dbt_show_command()
+  end, { desc = "Execute query - inline results", noremap = true, silent = false })
+
+  -- Execute with dbt show - buffer results
+  vim.keymap.set("n", "<leader>dS", function()
+    require("dbt-power.execute").execute_with_dbt_show_buffer()
+  end, { desc = "Execute query - buffer results", noremap = true, silent = false })
+
+  -- Preview CTE with picker
+  vim.keymap.set("n", "<leader>dq", function()
+    require("dbt-power.dbt.cte_preview").show_cte_picker()
+  end, { desc = "Preview CTE", noremap = true, silent = false })
+
+  -- Create ad-hoc temporary model
+  vim.keymap.set("n", "<leader>da", function()
+    require("dbt-power.dbt.adhoc").create_adhoc_model()
+  end, { desc = "Create ad-hoc temporary model", noremap = true, silent = false })
+
+  -- Execute visual selection
+  vim.keymap.set("v", "<leader>dx", ":<C-u>lua require('dbt-power.execute').execute_selection()<CR>", {
+    noremap = true,
+    silent = false,
+    desc = "Execute SQL selection",
+  })
+
+  -- Clear inline results
+  if km.clear_results then
+    vim.keymap.set("n", km.clear_results, function()
+      require("dbt-power.ui.inline_results").clear_all()
+    end, { desc = "Clear query results", noremap = true, silent = false })
+  end
+
+  -- Execute compiled SQL directly with snowsql (buffer - full results)
+  vim.keymap.set("n", "<leader>dP", function()
+    require("dbt-power.dbt.execute").execute_with_direct_query_buffer()
+  end, {
+    desc = "Preview compiled model in buffer (full results, no truncation)",
+    noremap = true,
+    silent = false,
+  })
+
+  -- Execute compiled SQL directly with snowsql (inline - full results)
+  vim.keymap.set("n", "<leader>dp", function()
+    require("dbt-power.dbt.execute").execute_with_direct_query_inline()
+  end, {
+    desc = "Preview compiled model inline (full results, no truncation)",
+    noremap = true,
+    silent = false,
+  })
 end
 
 -- Create user commands
