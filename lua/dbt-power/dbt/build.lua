@@ -311,13 +311,23 @@ function M.append_to_build_buffer(buf, output)
   -- Get current lines
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 
+  -- Remove the closing "```" (last line)
+  if lines[#lines] == "```" then
+    table.remove(lines)
+  end
+
   -- Remove the "[Building...]" placeholder
   if lines[#lines] == "[Building...]" then
     table.remove(lines)
   end
+
+  -- Remove the opening "```"
   if lines[#lines] == "```" then
     table.remove(lines)
   end
+
+  -- Add the opening code block again
+  table.insert(lines, "```")
 
   -- Add output lines
   if output and output ~= "" then
