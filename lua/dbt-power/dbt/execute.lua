@@ -454,6 +454,162 @@ function M.execute_selection()
   end)
 end
 
+-- Execute visual selection via buffer output
+function M.execute_selection_with_buffer()
+  local bufnr = vim.api.nvim_get_current_buf()
+
+  -- Try to get visual selection using marks
+  local start_pos = vim.fn.getpos("'<")
+  local end_pos = vim.fn.getpos("'>")
+
+  local selected_sql = nil
+
+  if start_pos[2] ~= 0 and end_pos[2] ~= 0 then
+    -- Marks are available
+    local start_line = start_pos[2] - 1  -- 0-indexed
+    local end_line = end_pos[2]
+    local start_col = start_pos[3] - 1
+    local end_col = end_pos[3]
+
+    -- Get selected lines
+    local selected_lines = vim.api.nvim_buf_get_lines(bufnr, start_line, end_line, false)
+    if #selected_lines > 0 then
+      -- Handle multi-line selection
+      if #selected_lines == 1 then
+        -- Single line: extract from start_col to end_col
+        selected_sql = selected_lines[1]:sub(start_col + 1, end_col)
+      else
+        -- Multi-line: first line from start_col, last line to end_col
+        selected_lines[1] = selected_lines[1]:sub(start_col + 1)
+        selected_lines[#selected_lines] = selected_lines[#selected_lines]:sub(1, end_col)
+        selected_sql = table.concat(selected_lines, "\n")
+      end
+    end
+  end
+
+  -- Fallback: try to get selection from unnamed register
+  if not selected_sql or vim.trim(selected_sql) == "" then
+    -- Copy visual selection to unnamed register
+    vim.cmd("noautocmd normal! \"vy\"")
+    selected_sql = vim.fn.getreg('"')
+  end
+
+  if not selected_sql or vim.trim(selected_sql) == "" then
+    vim.notify("[dbt-power] No selection found. Use visual mode (v) to select SQL", vim.log.levels.WARN)
+    return
+  end
+
+  -- Show loading indicator
+  local buffer_output = require("dbt-power.ui.buffer_output")
+  buffer_output.show_loading("[dbt-power] Executing selection (compiling with dbt, executing with snowsql)...")
+
+  -- Trim the selected SQL and ensure it's clean
+  selected_sql = vim.trim(selected_sql)
+
+  -- Remove trailing semicolon if present
+  selected_sql = selected_sql:gsub("%s*;%s*$", "")
+
+  -- Wrap with CTE to ensure proper SQL structure
+  selected_sql = "WITH cte AS (\n  " .. selected_sql .. "\n)\nSELECT * FROM cte"
+
+  -- Create a temporary ad-hoc model from the selection
+  local project_root = require("dbt-power.utils.project").find_dbt_project()
+  if not project_root then
+    buffer_output.clear_loading()
+    vim.notify("[dbt-power] Could not find dbt project root", vim.log.levels.ERROR)
+    return
+  end
+
+  -- Create adhoc directory if it doesn't exist
+  local adhoc_dir = project_root .. "/models/adhoc"
+  local stat = vim.fn.getfperm(adhoc_dir)
+  if stat == "" then
+    vim.fn.mkdir(adhoc_dir, "p")
+  end
+
+  -- Generate filename with timestamp for uniqueness
+  local timestamp = os.date("%Y%m%d_%H%M%S")
+  local micro = math.floor(vim.loop.hrtime() / 1000) % 1000
+  local model_name = "adhoc_selection_" .. timestamp .. "_" .. string.format("%03d", micro)
+  local model_path = adhoc_dir .. "/" .. model_name .. ".sql"
+
+  -- Write the selected SQL to the temporary model
+  local file = io.open(model_path, "w")
+  if not file then
+    buffer_output.clear_loading()
+    vim.notify("[dbt-power] Failed to create temporary model file", vim.log.levels.ERROR)
+    return
+  end
+
+  local final_content = string.format("-- Temporary ad-hoc model from visual selection\n-- %s\n\n%s\n", os.date("%Y-%m-%d %H:%M:%S"), selected_sql)
+  file:write(final_content)
+  file:close()
+
+  -- Track execution time
+  local start_time = vim.loop.hrtime()
+  local compile_start = start_time
+
+  -- Compile the ad-hoc model
+  M.compile_dbt_model(project_root, model_name, function(compiled_sql)
+    local compile_end = vim.loop.hrtime()
+    local compile_ms = math.floor((compile_end - compile_start) / 1000000)
+
+    if not compiled_sql then
+      buffer_output.clear_loading()
+      vim.notify("[dbt-power] Compilation failed for selection", vim.log.levels.ERROR)
+      os.remove(model_path)
+      return
+    end
+
+    -- Apply row limit from config
+    local max_rows = M.config.direct_query and M.config.direct_query.max_rows or 100
+    local limited_sql = M.wrap_with_limit(compiled_sql, max_rows)
+
+    -- Execute via snowsql
+    local query_start = vim.loop.hrtime()
+    M.execute_via_snowsql(limited_sql, function(results)
+      local query_end = vim.loop.hrtime()
+      local query_ms = math.floor((query_end - query_start) / 1000000)
+
+      buffer_output.clear_loading()
+
+      if results.error then
+        M.show_error_details("snowsql execution failed for selection", results.error)
+        os.remove(model_path)
+        return
+      end
+
+      -- Calculate total execution time
+      local end_time = vim.loop.hrtime()
+      local total_ms = math.floor((end_time - start_time) / 1000000)
+      local total_str = string.format("%.2fs", total_ms / 1000)
+      local compile_str = string.format("%.2fs", compile_ms / 1000)
+      local query_str = string.format("%.2fs", query_ms / 1000)
+
+      -- Display in buffer
+      local title = string.format(
+        "Selection | %d rows | Total: %s (compile: %s, query: %s)",
+        #results.rows,
+        total_str,
+        compile_str,
+        query_str
+      )
+      local split_size = M.config.direct_query and M.config.direct_query.buffer_split_size or 30
+      buffer_output.show_results_in_buffer(results, title, split_size)
+
+      vim.notify(
+        string.format("[dbt-power] Selection executed successfully (%d rows in %s)", #results.rows, total_str),
+        vim.log.levels.INFO
+      )
+
+      -- Clean up the temporary file
+      vim.schedule(function()
+        os.remove(model_path)
+      end)
+    end)
+  end)
+end
+
 -- Execute ad-hoc model by compiling with dbt then executing with snowsql
 function M.execute_adhoc_model_with_snowsql(project_root, model_name, model_path, callback)
   -- Track execution time

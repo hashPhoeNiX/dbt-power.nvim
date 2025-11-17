@@ -19,4 +19,8 @@ function M.execute_selection()
   require("dbt-power.dbt.execute").execute_selection()
 end
 
+function M.execute_selection_with_buffer()
+  require("dbt-power.dbt.execute").execute_selection_with_buffer()
+end
+
 return M

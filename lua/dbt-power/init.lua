@@ -97,11 +97,18 @@ function M.create_keymaps()
     require("dbt-power.dbt.adhoc").create_adhoc_model()
   end, { desc = "Create ad-hoc temporary model", noremap = true, silent = false })
 
-  -- Execute visual selection
+  -- Execute visual selection (inline)
   vim.keymap.set("v", "<leader>dx", ":<C-u>lua require('dbt-power.execute').execute_selection()<CR>", {
     noremap = true,
     silent = false,
-    desc = "Execute SQL selection",
+    desc = "Execute SQL selection (inline)",
+  })
+
+  -- Execute visual selection (buffer)
+  vim.keymap.set("v", "<leader>dX", ":<C-u>lua require('dbt-power.execute').execute_selection_with_buffer()<CR>", {
+    noremap = true,
+    silent = false,
+    desc = "Execute SQL selection (buffer)",
   })
 
   -- Clear inline results
