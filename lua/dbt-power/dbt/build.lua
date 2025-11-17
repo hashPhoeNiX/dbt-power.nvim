@@ -36,6 +36,9 @@ function M.build_current_model()
 
   local cmd_str = table.concat(cmd, " ")
 
+  -- Create buffer immediately
+  local buf = M.create_build_buffer("Building: " .. model_name, cmd_str)
+
   Job:new({
     command = cmd[1],
     args = vim.list_slice(cmd, 2),
@@ -51,11 +54,11 @@ function M.build_current_model()
 
         if return_val ~= 0 then
           vim.notify("[dbt-power] Build failed for model: " .. model_name, vim.log.levels.ERROR)
-          M.show_build_output("Build Failed: " .. model_name, cmd_str, full_output)
+          M.append_to_build_buffer(buf, full_output)
           return
         end
 
-        M.show_build_output("Build Successful: " .. model_name, cmd_str, full_output)
+        M.append_to_build_buffer(buf, full_output)
         vim.notify("[dbt-power] Successfully built: " .. model_name, vim.log.levels.INFO)
       end)
     end,
@@ -87,6 +90,9 @@ function M.build_upstream()
 
   local cmd_str = table.concat(cmd, " ")
 
+  -- Create buffer immediately
+  local buf = M.create_build_buffer("Building (Upstream): " .. model_name, cmd_str)
+
   Job:new({
     command = cmd[1],
     args = vim.list_slice(cmd, 2),
@@ -102,11 +108,11 @@ function M.build_upstream()
 
         if return_val ~= 0 then
           vim.notify("[dbt-power] Build failed for upstream of: " .. model_name, vim.log.levels.ERROR)
-          M.show_build_output("Build Failed (Upstream): " .. model_name, cmd_str, full_output)
+          M.append_to_build_buffer(buf, full_output)
           return
         end
 
-        M.show_build_output("Build Successful (Upstream): " .. model_name, cmd_str, full_output)
+        M.append_to_build_buffer(buf, full_output)
         vim.notify("[dbt-power] Successfully built upstream dependencies for: " .. model_name, vim.log.levels.INFO)
       end)
     end,
@@ -138,6 +144,9 @@ function M.build_downstream()
 
   local cmd_str = table.concat(cmd, " ")
 
+  -- Create buffer immediately
+  local buf = M.create_build_buffer("Building (Downstream): " .. model_name, cmd_str)
+
   Job:new({
     command = cmd[1],
     args = vim.list_slice(cmd, 2),
@@ -153,11 +162,11 @@ function M.build_downstream()
 
         if return_val ~= 0 then
           vim.notify("[dbt-power] Build failed for downstream of: " .. model_name, vim.log.levels.ERROR)
-          M.show_build_output("Build Failed (Downstream): " .. model_name, cmd_str, full_output)
+          M.append_to_build_buffer(buf, full_output)
           return
         end
 
-        M.show_build_output("Build Successful (Downstream): " .. model_name, cmd_str, full_output)
+        M.append_to_build_buffer(buf, full_output)
         vim.notify("[dbt-power] Successfully built downstream dependencies for: " .. model_name, vim.log.levels.INFO)
       end)
     end,
@@ -189,6 +198,9 @@ function M.build_all_dependencies()
 
   local cmd_str = table.concat(cmd, " ")
 
+  -- Create buffer immediately
+  local buf = M.create_build_buffer("Building (All Dependencies): " .. model_name, cmd_str)
+
   Job:new({
     command = cmd[1],
     args = vim.list_slice(cmd, 2),
@@ -204,23 +216,23 @@ function M.build_all_dependencies()
 
         if return_val ~= 0 then
           vim.notify("[dbt-power] Build failed for all dependencies of: " .. model_name, vim.log.levels.ERROR)
-          M.show_build_output("Build Failed (All Dependencies): " .. model_name, cmd_str, full_output)
+          M.append_to_build_buffer(buf, full_output)
           return
         end
 
-        M.show_build_output("Build Successful (All Dependencies): " .. model_name, cmd_str, full_output)
+        M.append_to_build_buffer(buf, full_output)
         vim.notify("[dbt-power] Successfully built all dependencies for: " .. model_name, vim.log.levels.INFO)
       end)
     end,
   }):start()
 end
 
--- Show build output in a split buffer
-function M.show_build_output(title, command, output)
+-- Create and show build output buffer immediately
+function M.create_build_buffer(title, command)
   -- Create new buffer for output
   local buf = vim.api.nvim_create_buf(false, true)
 
-  -- Format output
+  -- Format initial output
   local lines = {}
 
   -- Add title
@@ -229,7 +241,7 @@ function M.show_build_output(title, command, output)
     table.insert(lines, "")
   end
 
-  -- Add command that was executed
+  -- Add command that will be executed
   table.insert(lines, "**Command:**")
   table.insert(lines, "```bash")
   table.insert(lines, command)
@@ -240,22 +252,15 @@ function M.show_build_output(title, command, output)
   table.insert(lines, "---")
   table.insert(lines, "")
   table.insert(lines, "**Output:**")
-  table.insert(lines, "")
-
-  -- Add the actual output
-  if output and output ~= "" then
-    for line in output:gmatch("[^\n]+") do
-      table.insert(lines, line)
-    end
-  else
-    table.insert(lines, "(No output)")
-  end
+  table.insert(lines, "```")
+  table.insert(lines, "[Building...]")
+  table.insert(lines, "```")
 
   -- Set buffer content
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 
-  -- Make buffer read-only
-  vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
+  -- Make buffer modifiable initially to append output
+  vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
   vim.api.nvim_set_option_value("buftype", "nofile", { buf = buf })
   vim.api.nvim_set_option_value("filetype", "markdown", { buf = buf })
   vim.api.nvim_buf_set_name(buf, "[dbt-power] Build Output")
@@ -290,6 +295,45 @@ function M.show_build_output(title, command, output)
 
   -- Return to previous buffer
   vim.cmd("wincmd p")
+
+  return buf
+end
+
+-- Append output to an existing build buffer
+function M.append_to_build_buffer(buf, output)
+  if not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+
+  -- Make buffer modifiable
+  vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
+
+  -- Get current lines
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+
+  -- Remove the "[Building...]" placeholder
+  if lines[#lines] == "[Building...]" then
+    table.remove(lines)
+  end
+  if lines[#lines] == "```" then
+    table.remove(lines)
+  end
+
+  -- Add output lines
+  if output and output ~= "" then
+    for line in output:gmatch("[^\n]+") do
+      table.insert(lines, line)
+    end
+  end
+
+  -- Close code block
+  table.insert(lines, "```")
+
+  -- Set buffer content
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+
+  -- Make buffer read-only
+  vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
 end
 
 -- Get model name from filepath
