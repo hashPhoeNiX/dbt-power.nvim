@@ -6,12 +6,18 @@ local M = {}
 local current_buffer = nil
 local loading_notif_id = nil
 
--- Show a loading message
+-- Show a loading message (returns notification ID for later replacement)
 function M.show_loading(message)
   loading_notif_id = vim.notify(message or "[dbt-power] Executing...", vim.log.levels.INFO, {
     title = "dbt-power",
     timeout = 0,  -- Don't auto-dismiss
   })
+  return loading_notif_id
+end
+
+-- Get the current loading notification ID
+function M.get_loading_notif_id()
+  return loading_notif_id
 end
 
 -- Update the loading message
@@ -36,7 +42,8 @@ function M.clear_loading()
 end
 
 -- Open a buffer at the bottom to show results
-function M.show_results_in_buffer(results, title)
+-- split_size: optional height in lines (default 30)
+function M.show_results_in_buffer(results, title, split_size)
   M.clear_loading()
 
   -- Close existing buffer if open
@@ -50,10 +57,12 @@ function M.show_results_in_buffer(results, title)
   -- Format results using markdown table format (same as inline)
   local lines = M.format_results_as_markdown(results, title)
 
-  -- Limit to reasonable number for display
-  if #lines > 1000 then
+  -- Note: Buffer is scrollable, so we don't truncate large result sets
+  -- Just warn if there are a LOT of rows (would cause performance issues)
+  if #lines > 5000 then
     table.insert(lines, "")
-    table.insert(lines, "... (truncated, showing first 1000 lines)")
+    table.insert(lines, "⚠️  Warning: Very large result set. Showing first 5000 lines for performance.")
+    table.insert(lines, "Use filters or LIMIT clauses to reduce result size.")
   end
 
   -- Set buffer content
@@ -68,11 +77,15 @@ function M.show_results_in_buffer(results, title)
   -- Set filetype to markdown so render-markdown can format it
   vim.api.nvim_set_option_value("filetype", "markdown", { buf = current_buffer })
 
+  -- Disable line wrapping for horizontal scrolling
+  vim.api.nvim_set_option_value("wrap", false, { win = vim.api.nvim_get_current_win() })
+
   -- Set buffer name
   vim.api.nvim_buf_set_name(current_buffer, "[dbt-power] Results")
 
-  -- Open split at bottom
-  vim.cmd("botright 15split")
+  -- Open split at bottom with configurable size (default 30 lines)
+  local size = split_size or 30
+  vim.cmd(string.format("botright %dsplit", size))
   vim.api.nvim_set_current_buf(current_buffer)
 
   -- Add keymaps to close buffer
@@ -90,6 +103,24 @@ function M.show_results_in_buffer(results, title)
     end
   end, { buffer = current_buffer, silent = true, desc = "Close results buffer" })
 
+  -- Add keymap to resize buffer larger
+  vim.keymap.set("n", "+", function()
+    vim.cmd("resize +10")
+  end, { buffer = current_buffer, silent = true, desc = "Make results window taller" })
+
+  vim.keymap.set("n", "-", function()
+    vim.cmd("resize -10")
+  end, { buffer = current_buffer, silent = true, desc = "Make results window smaller" })
+
+  -- Add keymaps for horizontal scrolling
+  vim.keymap.set("n", ">", function()
+    vim.cmd("normal! 5zl")  -- Scroll right
+  end, { buffer = current_buffer, silent = true, desc = "Scroll right" })
+
+  vim.keymap.set("n", "<", function()
+    vim.cmd("normal! 5zh")  -- Scroll left
+  end, { buffer = current_buffer, silent = true, desc = "Scroll left" })
+
   -- Return to previous buffer
   vim.cmd("wincmd p")
 end
@@ -97,7 +128,7 @@ end
 -- Format results as markdown table (proper markdown syntax for render-markdown)
 function M.format_results_as_markdown(results, title)
   local lines = {}
-  local max_col_width = 50
+  local max_col_width = 150  -- Increased to show more content without truncation
 
   -- Add title if provided
   if title then

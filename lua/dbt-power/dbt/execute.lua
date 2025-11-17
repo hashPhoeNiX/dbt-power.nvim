@@ -97,6 +97,191 @@ function M.execute_with_dbt_show_buffer()
   end)
 end
 
+-- Execute current model with direct snowsql query (bypasses dbt show truncation)
+-- Display results in a split window with full columns visible
+function M.execute_with_direct_query_buffer()
+  local bufnr = vim.api.nvim_get_current_buf()
+  local filepath = vim.fn.expand("%:p")
+
+  local model_name = nil
+
+  -- Check if we're in a dbt model file
+  if filepath:match("%.sql$") then
+    model_name = M.get_model_name()
+  else
+    -- Check if we're in the preview buffer and use stored model name
+    local compile = require("dbt-power.dbt.compile")
+    if compile.preview_model_name and compile.preview_bufnr == bufnr then
+      model_name = compile.preview_model_name
+    end
+  end
+
+  if not model_name then
+    vim.notify("[dbt-power] Not in a dbt model file (.sql) or preview buffer", vim.log.levels.WARN)
+    return
+  end
+
+  local project_root = require("dbt-power.utils.project").find_dbt_project()
+  if not project_root then
+    vim.notify("[dbt-power] Could not find dbt project root", vim.log.levels.ERROR)
+    return
+  end
+
+  -- Show loading indicator
+  local buffer_output = require("dbt-power.ui.buffer_output")
+  local loading_notif_id = buffer_output.show_loading("[dbt-power] Compiling and executing " .. model_name .. " with snowsql...")
+
+  -- Track execution time with breakdown
+  local start_time = vim.loop.hrtime()
+  local compile_start = start_time
+
+  -- Compile the model first
+  M.compile_dbt_model(project_root, model_name, function(compiled_sql)
+    local compile_end = vim.loop.hrtime()
+    local compile_ms = math.floor((compile_end - compile_start) / 1000000)
+
+    if not compiled_sql then
+      buffer_output.clear_loading()
+      vim.notify("[dbt-power] Compilation failed for model: " .. model_name, vim.log.levels.ERROR, { timeout = 5000 })
+      return
+    end
+
+    -- Apply row limit from config
+    local max_rows = M.config.direct_query and M.config.direct_query.max_rows or 100
+    local limited_sql = M.wrap_with_limit(compiled_sql, max_rows)
+
+    -- Execute via snowsql with limited results
+    local query_start = vim.loop.hrtime()
+    M.execute_via_snowsql(limited_sql, function(results)
+      local query_end = vim.loop.hrtime()
+      local query_ms = math.floor((query_end - query_start) / 1000000)
+
+      buffer_output.clear_loading()
+
+      if results.error then
+        M.show_error_details("snowsql execution failed for model: " .. model_name, results.error)
+        return
+      end
+
+      -- Calculate total execution time in milliseconds
+      local end_time = vim.loop.hrtime()
+      local total_ms = math.floor((end_time - start_time) / 1000000)
+      local total_str = string.format("%.2fs", total_ms / 1000)
+      local compile_str = string.format("%.2fs", compile_ms / 1000)
+      local query_str = string.format("%.2fs", query_ms / 1000)
+
+      -- Add timing information to results
+      results.execution_time = total_str
+
+      -- Display in buffer instead of inline
+      local title = string.format(
+        "Model: %s (Limited to %d) | %d rows | Total: %s (compile: %s, query: %s)",
+        model_name,
+        max_rows,
+        #results.rows,
+        total_str,
+        compile_str,
+        query_str
+      )
+      local split_size = M.config.direct_query and M.config.direct_query.buffer_split_size or 30
+      buffer_output.show_results_in_buffer(results, title, split_size)
+
+      vim.notify(
+        string.format("[dbt-power] Executed successfully (%d rows in %s)", #results.rows, total_str),
+        vim.log.levels.INFO,
+        { timeout = 3000, replace = loading_notif_id }
+      )
+    end)
+  end)
+end
+
+-- Execute current model with direct snowsql query (inline results)
+-- Display results inline at cursor position without truncation
+function M.execute_with_direct_query_inline()
+  local bufnr = vim.api.nvim_get_current_buf()
+  local cursor_line = vim.api.nvim_win_get_cursor(0)[1] - 1
+  local filepath = vim.fn.expand("%:p")
+
+  local model_name = nil
+
+  -- Check if we're in a dbt model file
+  if filepath:match("%.sql$") then
+    model_name = M.get_model_name()
+  else
+    -- Check if we're in the preview buffer and use stored model name
+    local compile = require("dbt-power.dbt.compile")
+    if compile.preview_model_name and compile.preview_bufnr == bufnr then
+      model_name = compile.preview_model_name
+    end
+  end
+
+  if not model_name then
+    vim.notify("[dbt-power] Not in a dbt model file (.sql) or preview buffer", vim.log.levels.WARN)
+    return
+  end
+
+  local project_root = require("dbt-power.utils.project").find_dbt_project()
+  if not project_root then
+    vim.notify("[dbt-power] Could not find dbt project root", vim.log.levels.ERROR)
+    return
+  end
+
+  -- Clear previous results at this line
+  inline_results.clear_at_line(bufnr, cursor_line)
+
+  -- Show loading indicator
+  local loading_notif_id = vim.notify("[dbt-power] Compiling and executing " .. model_name .. " with snowsql...", vim.log.levels.INFO, { timeout = 0 })
+
+  -- Track execution time with breakdown
+  local start_time = vim.loop.hrtime()
+  local compile_start = start_time
+
+  -- Compile the model first
+  M.compile_dbt_model(project_root, model_name, function(compiled_sql)
+    local compile_end = vim.loop.hrtime()
+    local compile_ms = math.floor((compile_end - compile_start) / 1000000)
+
+    if not compiled_sql then
+      vim.notify("[dbt-power] Compilation failed for model: " .. model_name, vim.log.levels.ERROR, { timeout = 5000 })
+      return
+    end
+
+    -- Apply row limit from config
+    local max_rows = M.config.direct_query and M.config.direct_query.max_rows or 100
+    local limited_sql = M.wrap_with_limit(compiled_sql, max_rows)
+
+    -- Execute via snowsql with limited results
+    local query_start = vim.loop.hrtime()
+    M.execute_via_snowsql(limited_sql, function(results)
+      local query_end = vim.loop.hrtime()
+      local query_ms = math.floor((query_end - query_start) / 1000000)
+
+      if results.error then
+        M.show_error_details("snowsql execution failed for model: " .. model_name, results.error)
+        return
+      end
+
+      -- Calculate total execution time in milliseconds
+      local end_time = vim.loop.hrtime()
+      local total_ms = math.floor((end_time - start_time) / 1000000)
+      local total_str = string.format("%.2fs", total_ms / 1000)
+      local compile_str = string.format("%.2fs", compile_ms / 1000)
+      local query_str = string.format("%.2fs", query_ms / 1000)
+
+      -- Add timing information to results
+      results.execution_time = total_str
+
+      -- Display results inline
+      inline_results.display_query_results(bufnr, cursor_line, results)
+      vim.notify(
+        string.format("[dbt-power] Executed successfully (%d rows in %s - compile: %s, query: %s)", #results.rows, total_str, compile_str, query_str),
+        vim.log.levels.INFO,
+        { timeout = 3000, replace = loading_notif_id }
+      )
+    end)
+  end)
+end
+
 -- Execute current model using dbt show (ALTERNATIVE METHOD)
 -- Use different keymap for this (e.g., <leader>ds)
 function M.execute_with_dbt_show_command()
@@ -476,6 +661,129 @@ function M.execute_via_dadbod(sql, callback)
       end)
     end,
   }):start()
+end
+
+-- Execute SQL using snowsql CLI directly (bypasses dbt show truncation)
+-- This executes the compiled SQL directly against Snowflake
+function M.execute_via_snowsql(sql, callback)
+  -- Remove trailing semicolon and whitespace
+  sql = vim.trim(sql)
+  sql = sql:gsub("%s*;%s*$", "")
+
+  -- Create temp SQL file for execution
+  local temp_file = vim.fn.tempname() .. ".sql"
+  local file = io.open(temp_file, "w")
+  if not file then
+    callback({ error = "Could not create temp SQL file" })
+    return
+  end
+
+  file:write(sql)
+  file:close()
+
+  -- Execute via snowsql - uses connection from ~/.snowsql/config
+  -- Using snowflake_dev connection (can be made configurable)
+  Job:new({
+    command = "snowsql",
+    args = { "-c", "snowflake_dev", "-f", temp_file },
+    on_exit = function(j, return_val)
+      vim.schedule(function()
+        -- Clean up temp file
+        os.remove(temp_file)
+
+        if return_val ~= 0 then
+          local stderr = table.concat(j:stderr_result(), "\n")
+          local stdout = table.concat(j:result(), "\n")
+          local full_output = stderr
+          if stdout ~= "" then
+            full_output = stdout .. "\n" .. stderr
+          end
+          callback({ error = "snowsql query failed:\n" .. full_output })
+          return
+        end
+
+        -- Parse tabular results from snowsql output
+        local stdout = table.concat(j:result(), "\n")
+        local parsed = M.parse_snowsql_results(stdout)
+
+        callback(parsed)
+      end)
+    end,
+  }):start()
+end
+
+-- Parse snowsql output which comes in pipe-separated table format
+-- Similar to dbt show output but without the box-drawing characters
+function M.parse_snowsql_results(output)
+  local columns = {}
+  local rows = {}
+
+  if not output or output == "" then
+    return { columns = {}, rows = {} }
+  end
+
+  local lines = vim.split(output, "\n")
+
+  -- Find the header row (first row with pipe separators, typically after connection messages)
+  local header_idx = nil
+  for i, line in ipairs(lines) do
+    -- Look for a line with pipes that's not just separators
+    if line:match("|") and not line:match("^[%s%-%+|]+$") then
+      header_idx = i
+      break
+    end
+  end
+
+  if not header_idx then
+    return { columns = {}, rows = {} }
+  end
+
+  -- Parse header row
+  local header_line = lines[header_idx]
+  for col in header_line:gmatch("|([^|]+)") do
+    local trimmed = vim.trim(col)
+    if trimmed ~= "" then
+      table.insert(columns, trimmed)
+    end
+  end
+
+  if #columns == 0 then
+    return { columns = {}, rows = {} }
+  end
+
+  -- Parse data rows
+  for i = header_idx + 1, #lines do
+    local line = lines[i]
+
+    -- Skip separator lines and empty lines
+    if vim.trim(line) == "" or line:match("^[%s%-%+|]+$") then
+      goto continue_snowsql_parse
+    end
+
+    -- Skip lines that don't look like data rows (no pipes)
+    if not line:match("|") then
+      goto continue_snowsql_parse
+    end
+
+    -- Parse row
+    local row = {}
+    for value in line:gmatch("|([^|]+)") do
+      local trimmed = vim.trim(value)
+      table.insert(row, trimmed)
+    end
+
+    -- Only add rows with correct number of columns
+    if #row == #columns then
+      table.insert(rows, row)
+    end
+
+    ::continue_snowsql_parse::
+  end
+
+  return {
+    columns = columns,
+    rows = rows,
+  }
 end
 
 -- Parse CSV results from query output
