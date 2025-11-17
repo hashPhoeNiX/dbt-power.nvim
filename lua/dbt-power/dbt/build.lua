@@ -252,7 +252,7 @@ function M.create_build_buffer(title, command)
   table.insert(lines, "---")
   table.insert(lines, "")
   table.insert(lines, "**Output:**")
-  table.insert(lines, "```")
+  table.insert(lines, "```bash")
   table.insert(lines, "[Building...]")
   table.insert(lines, "```")
 
@@ -299,6 +299,12 @@ function M.create_build_buffer(title, command)
   return buf
 end
 
+-- Strip ANSI color codes from output
+function M.strip_ansi_codes(text)
+  -- Remove ANSI escape sequences: [0m, [32m, [31m, etc.
+  return text:gsub("\27%[[0-9;]*m", "")
+end
+
 -- Append output to an existing build buffer
 function M.append_to_build_buffer(buf, output)
   if not vim.api.nvim_buf_is_valid(buf) then
@@ -321,18 +327,20 @@ function M.append_to_build_buffer(buf, output)
     table.remove(lines)
   end
 
-  -- Remove the opening "```"
-  if lines[#lines] == "```" then
+  -- Remove the opening "```bash"
+  if lines[#lines] == "```bash" then
     table.remove(lines)
   end
 
   -- Add the opening code block again
-  table.insert(lines, "```")
+  table.insert(lines, "```bash")
 
-  -- Add output lines
+  -- Add output lines with ANSI codes stripped
   if output and output ~= "" then
     for line in output:gmatch("[^\n]+") do
-      table.insert(lines, line)
+      -- Strip ANSI color codes
+      local clean_line = M.strip_ansi_codes(line)
+      table.insert(lines, clean_line)
     end
   end
 
