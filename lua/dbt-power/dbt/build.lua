@@ -6,6 +6,7 @@ local M = {}
 local Job = require("plenary.job")
 
 M.config = {}
+M.build_buffer = nil  -- Track current build buffer
 
 function M.setup(config)
   M.config = config or {}
@@ -229,6 +230,11 @@ end
 
 -- Create and show build output buffer immediately
 function M.create_build_buffer(title, command)
+  -- Close previous build buffer if it exists
+  if M.build_buffer and vim.api.nvim_buf_is_valid(M.build_buffer) then
+    vim.api.nvim_buf_delete(M.build_buffer, { force = true })
+  end
+
   -- Create new buffer for output
   local buf = vim.api.nvim_create_buf(false, true)
 
@@ -296,6 +302,8 @@ function M.create_build_buffer(title, command)
   -- Return to previous buffer
   vim.cmd("wincmd p")
 
+  -- Store buffer reference for later cleanup
+  M.build_buffer = buf
   return buf
 end
 
