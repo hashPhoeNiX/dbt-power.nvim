@@ -47,7 +47,7 @@ function M.extract_ctes()
   return ctes
 end
 
--- Preview a specific CTE by executing it
+-- Preview a specific CTE by executing it with dbt show
 function M.preview_cte(cte_name, callback)
   local project_root = require("dbt-power.utils.project").find_dbt_project()
   if not project_root then
@@ -186,6 +186,152 @@ function M.preview_cte(cte_name, callback)
   compile_job:start()
 end
 
+-- Preview a specific CTE by executing it with snowsql
+function M.preview_cte_with_snowsql(cte_name, callback)
+  local project_root = require("dbt-power.utils.project").find_dbt_project()
+  if not project_root then
+    vim.notify("[dbt-power] Not in a dbt project", vim.log.levels.ERROR)
+    return
+  end
+
+  local model_name = require("dbt-power.dbt.execute").get_model_name()
+  if not model_name then
+    vim.notify("[dbt-power] Could not determine model name", vim.log.levels.ERROR)
+    return
+  end
+
+  -- Show loading message
+  local buffer_output = require("dbt-power.ui.buffer_output")
+  buffer_output.show_loading("[dbt-power] Executing " .. model_name .. " (CTE: " .. cte_name .. ") with snowsql...")
+
+  -- Track execution time
+  local start_time = vim.loop.hrtime()
+  local compile_start = start_time
+
+  -- First, compile the model to get actual SQL
+  local compile_job = Job:new({
+    command = "dbt",
+    args = { "compile", "--select", model_name },
+    cwd = project_root,
+    on_exit = function(j, return_val)
+      vim.schedule(function()
+        if return_val ~= 0 then
+          local stderr = table.concat(j:stderr_result(), "\n")
+          vim.notify("[dbt-power] Compile failed: " .. stderr, vim.log.levels.ERROR)
+          buffer_output.clear_loading()
+          return
+        end
+
+        local compile_end = vim.loop.hrtime()
+        local compile_ms = math.floor((compile_end - compile_start) / 1000000)
+
+        -- Read compiled SQL
+        local compiled_dir = project_root .. "/target/compiled"
+        local compiled_path = nil
+
+        -- Search for the compiled file by walking the directory tree
+        local function find_compiled_file(dir, target_name)
+          local handle = vim.fn.glob(dir .. "/*", 1, 1)
+          if not handle or #handle == 0 then
+            return nil
+          end
+
+          for _, entry in ipairs(handle) do
+            if vim.fn.isdirectory(entry) == 1 then
+              -- Recurse into directories
+              local result = find_compiled_file(entry, target_name)
+              if result then return result end
+            else
+              -- Check if filename matches model name
+              if entry:match(target_name .. "%.sql$") then
+                return entry
+              end
+            end
+          end
+          return nil
+        end
+
+        compiled_path = find_compiled_file(compiled_dir, model_name)
+
+        if not compiled_path then
+          vim.notify("[dbt-power] Could not find compiled SQL for model: " .. model_name, vim.log.levels.ERROR)
+          buffer_output.clear_loading()
+          return
+        end
+
+        local file = io.open(compiled_path, "r")
+        if not file then
+          vim.notify("[dbt-power] Could not read compiled SQL file", vim.log.levels.ERROR)
+          buffer_output.clear_loading()
+          return
+        end
+
+        local compiled_sql = file:read("*a")
+        file:close()
+
+        -- Now wrap to select from specific CTE
+        local cte_query = M.wrap_cte_for_execution(compiled_sql, cte_name)
+
+        if not cte_query then
+          vim.notify("[dbt-power] Could not extract CTE: " .. cte_name, vim.log.levels.ERROR)
+          buffer_output.clear_loading()
+          return
+        end
+
+        -- Apply row limit from config
+        local max_rows = M.config.direct_query and M.config.direct_query.max_rows or 100
+        local limited_cte_query = cte_query .. " LIMIT " .. max_rows
+
+        -- Execute via snowsql
+        local query_start = vim.loop.hrtime()
+        local execute_module = require("dbt-power.dbt.execute")
+        execute_module.execute_via_snowsql(limited_cte_query, function(results)
+          local query_end = vim.loop.hrtime()
+          local query_ms = math.floor((query_end - query_start) / 1000000)
+
+          buffer_output.clear_loading()
+
+          if results.error then
+            vim.notify("[dbt-power] CTE execution failed: " .. results.error, vim.log.levels.ERROR)
+            return
+          end
+
+          if not results.columns or #results.columns == 0 then
+            vim.notify("[dbt-power] CTE returned no results", vim.log.levels.WARN)
+            return
+          end
+
+          -- Calculate total execution time
+          local end_time = vim.loop.hrtime()
+          local total_ms = math.floor((end_time - start_time) / 1000000)
+          local total_str = string.format("%.2fs", total_ms / 1000)
+          local compile_str = string.format("%.2fs", compile_ms / 1000)
+          local query_str = string.format("%.2fs", query_ms / 1000)
+
+          -- Display in buffer for CTE previews with timing
+          local title = string.format(
+            "CTE: %s | %d rows | Total: %s (compile: %s, query: %s)",
+            cte_name,
+            #results.rows,
+            total_str,
+            compile_str,
+            query_str
+          )
+          local split_size = M.config.direct_query and M.config.direct_query.buffer_split_size or 30
+          buffer_output.show_results_in_buffer(results, title, split_size)
+
+          vim.notify(
+            string.format("[dbt-power] CTE preview: %d rows (%s)", #results.rows, total_str),
+            vim.log.levels.INFO
+          )
+        end)
+      end)
+    end,
+  })
+
+  compile_job:start()
+end
+
 -- Wrap CTE in SELECT * to execute just that CTE
 function M.wrap_cte_for_execution(full_sql, cte_name)
   -- Replace the final SELECT with SELECT * FROM cte_name
@@ -256,8 +402,8 @@ function M.show_cte_picker()
   end
 
   if #ctes == 1 then
-    -- Only one CTE, preview it directly
-    M.preview_cte(ctes[1], function() end)
+    -- Only one CTE, show method picker
+    M.show_execution_method_picker(ctes[1])
     return
   end
 
@@ -269,7 +415,78 @@ function M.show_cte_picker()
     end,
   }, function(choice)
     if choice then
+      M.show_execution_method_picker(choice)
+    end
+  end)
+end
+
+-- Show picker for execution method (dbt show vs snowsql)
+function M.show_execution_method_picker(cte_name)
+  local methods = {
+    { label = "dbt show", execute = M.preview_cte },
+    { label = "snowsql", execute = M.preview_cte_with_snowsql },
+  }
+
+  vim.ui.select(methods, {
+    prompt = "Select execution method for CTE: " .. cte_name,
+    format_item = function(item)
+      return "  " .. item.label
+    end,
+  }, function(choice)
+    if choice then
+      choice.execute(cte_name, function() end)
+    end
+  end)
+end
+
+-- Preview CTE with dbt show (default)
+function M.show_cte_picker_dbt_show()
+  local ctes = M.extract_ctes()
+
+  if #ctes == 0 then
+    vim.notify("[dbt-power] No CTEs found in this model", vim.log.levels.WARN)
+    return
+  end
+
+  if #ctes == 1 then
+    M.preview_cte(ctes[1], function() end)
+    return
+  end
+
+  vim.ui.select(ctes, {
+    prompt = "Select CTE to preview (dbt show):",
+    format_item = function(item)
+      return "  " .. item
+    end,
+  }, function(choice)
+    if choice then
       M.preview_cte(choice, function() end)
+    end
+  end)
+end
+
+-- Preview CTE with snowsql
+function M.show_cte_picker_snowsql()
+  local ctes = M.extract_ctes()
+
+  if #ctes == 0 then
+    vim.notify("[dbt-power] No CTEs found in this model", vim.log.levels.WARN)
+    return
+  end
+
+  if #ctes == 1 then
+    M.preview_cte_with_snowsql(ctes[1], function() end)
+    return
+  end
+
+  vim.ui.select(ctes, {
+    prompt = "Select CTE to preview (snowsql):",
+    format_item = function(item)
+      return "  " .. item
+    end,
+  }, function(choice)
+    if choice then
+      M.preview_cte_with_snowsql(choice, function() end)
     end
   end)
 end

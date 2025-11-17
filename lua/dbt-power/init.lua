@@ -87,10 +87,15 @@ function M.create_keymaps()
     require("dbt-power.execute").execute_with_dbt_show_buffer()
   end, { desc = "Execute query - buffer results", noremap = true, silent = false })
 
-  -- Preview CTE with picker
+  -- Preview CTE with method picker (dbt show or snowsql)
   vim.keymap.set("n", "<leader>dq", function()
     require("dbt-power.dbt.cte_preview").show_cte_picker()
-  end, { desc = "Preview CTE", noremap = true, silent = false })
+  end, { desc = "Preview CTE (pick method)", noremap = true, silent = false })
+
+  -- Preview CTE with snowsql directly
+  vim.keymap.set("n", "<leader>dQ", function()
+    require("dbt-power.dbt.cte_preview").show_cte_picker_snowsql()
+  end, { desc = "Preview CTE (snowsql)", noremap = true, silent = false })
 
   -- Create ad-hoc temporary model
   vim.keymap.set("n", "<leader>da", function()
