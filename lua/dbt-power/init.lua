@@ -51,6 +51,7 @@ function M.setup(opts)
   require("dbt-power.ui.inline_results").setup(M.config.inline_results)
   require("dbt-power.dbt.compile").setup(M.config)
   require("dbt-power.dbt.execute").setup(M.config)
+  require("dbt-power.dbt.build").setup(M.config)
 
   -- Set up commands
   M.create_commands()
@@ -124,6 +125,42 @@ function M.create_keymaps()
     require("dbt-power.dbt.execute").execute_with_direct_query_inline()
   end, {
     desc = "Preview compiled model inline (full results, no truncation)",
+    noremap = true,
+    silent = false,
+  })
+
+  -- Build current model
+  vim.keymap.set("n", "<leader>dbm", function()
+    require("dbt-power.dbt.build").build_current_model()
+  end, {
+    desc = "Build current model",
+    noremap = true,
+    silent = false,
+  })
+
+  -- Build upstream dependencies
+  vim.keymap.set("n", "<leader>dbu", function()
+    require("dbt-power.dbt.build").build_upstream()
+  end, {
+    desc = "Build upstream dependencies",
+    noremap = true,
+    silent = false,
+  })
+
+  -- Build downstream dependencies
+  vim.keymap.set("n", "<leader>dbd", function()
+    require("dbt-power.dbt.build").build_downstream()
+  end, {
+    desc = "Build downstream dependencies",
+    noremap = true,
+    silent = false,
+  })
+
+  -- Build all dependencies (upstream and downstream)
+  vim.keymap.set("n", "<leader>dba", function()
+    require("dbt-power.dbt.build").build_all_dependencies()
+  end, {
+    desc = "Build all dependencies (upstream + downstream)",
     noremap = true,
     silent = false,
   })
