@@ -336,7 +336,7 @@ function M.execute_with_dbt_show_command()
   end)
 end
 
--- Execute visual selection by creating a temporary ad-hoc model
+-- Execute visual selection via temporary ad-hoc model with snowsql execution
 function M.execute_selection()
   local bufnr = vim.api.nvim_get_current_buf()
 
@@ -388,7 +388,7 @@ function M.execute_selection()
   inline_results.clear_at_line(bufnr, cursor_line)
 
   -- Show loading indicator
-  vim.notify("[dbt-power] Executing selection...", vim.log.levels.INFO)
+  vim.notify("[dbt-power] Executing selection (compiling with dbt, executing with snowsql)...", vim.log.levels.INFO)
 
   -- Trim the selected SQL and ensure it's clean
   selected_sql = vim.trim(selected_sql)
@@ -398,7 +398,6 @@ function M.execute_selection()
 
   -- Wrap with CTE to ensure proper SQL structure
   -- This handles Jinja2 expansions (like {{ source() }}) and ensures clean syntax
-  -- Don't add LIMIT here - models shouldn't have result limits, just execute and return data
   selected_sql = "WITH cte AS (\n  " .. selected_sql .. "\n)\nSELECT * FROM cte"
 
   -- Create a temporary ad-hoc model from the selection
@@ -432,10 +431,10 @@ function M.execute_selection()
   file:write(final_content)
   file:close()
 
-  -- Execute the ad-hoc model using dbt show
-  M.execute_with_dbt_show(project_root, model_name, function(results)
+  -- Execute the ad-hoc model using snowsql
+  M.execute_adhoc_model_with_snowsql(project_root, model_name, model_path, function(results)
     if results.error then
-      M.show_error_details("dbt show execution failed for selection", results.error)
+      M.show_error_details("snowsql execution failed for selection", results.error)
       -- Clean up the temporary file on error
       os.remove(model_path)
       return
@@ -451,6 +450,51 @@ function M.execute_selection()
     -- Clean up the temporary file after execution
     vim.schedule(function()
       os.remove(model_path)
+    end)
+  end)
+end
+
+-- Execute ad-hoc model by compiling with dbt then executing with snowsql
+function M.execute_adhoc_model_with_snowsql(project_root, model_name, model_path, callback)
+  -- Track execution time
+  local start_time = vim.loop.hrtime()
+  local compile_start = start_time
+
+  -- Compile the ad-hoc model
+  M.compile_dbt_model(project_root, model_name, function(compiled_sql)
+    local compile_end = vim.loop.hrtime()
+    local compile_ms = math.floor((compile_end - compile_start) / 1000000)
+
+    if not compiled_sql then
+      callback({ error = "Compilation failed for ad-hoc selection" })
+      return
+    end
+
+    -- Apply row limit from config
+    local max_rows = M.config.direct_query and M.config.direct_query.max_rows or 100
+    local limited_sql = M.wrap_with_limit(compiled_sql, max_rows)
+
+    -- Execute via snowsql with limited results
+    local query_start = vim.loop.hrtime()
+    M.execute_via_snowsql(limited_sql, function(results)
+      local query_end = vim.loop.hrtime()
+      local query_ms = math.floor((query_end - query_start) / 1000000)
+
+      if results.error then
+        callback(results)
+        return
+      end
+
+      -- Calculate total execution time
+      local end_time = vim.loop.hrtime()
+      local total_ms = math.floor((end_time - start_time) / 1000000)
+
+      -- Add timing information to results
+      results.execution_time = string.format("%.2fs", total_ms / 1000)
+      results.compile_time = string.format("%.2fs", compile_ms / 1000)
+      results.query_time = string.format("%.2fs", query_ms / 1000)
+
+      callback(results)
     end)
   end)
 end
