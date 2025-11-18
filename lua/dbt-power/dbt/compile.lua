@@ -26,14 +26,24 @@ function M.show_compiled_sql()
 
   vim.notify("[dbt-power] Compiling " .. model_name .. "...", vim.log.levels.INFO)
 
-  M.compile_model(model_name, function(compiled_sql)
-    if not compiled_sql then
-      vim.notify("[dbt-power] Failed to compile model", vim.log.levels.ERROR)
+  M.compile_model(model_name, function(result)
+    if result.error then
+      -- Show error with full details
+      M.show_error_details("Compilation failed for model: " .. model_name, result.error)
+      return
+    end
+
+    if not result.compiled_sql then
+      -- File not found after successful compile
+      M.show_error_details(
+        "Compilation succeeded but compiled SQL file not found",
+        "Searched paths:\n" .. (result.search_paths or "No paths recorded")
+      )
       return
     end
 
     -- Create or update preview window
-    M.show_in_split(compiled_sql)
+    M.show_in_split(result.compiled_sql)
   end)
 end
 
@@ -41,7 +51,7 @@ end
 function M.compile_model(model_name, callback)
   local project_root = require("dbt-power.utils.project").find_dbt_project()
   if not project_root then
-    callback(nil)
+    callback({ error = "Could not find dbt project root" })
     return
   end
 
@@ -59,43 +69,72 @@ function M.compile_model(model_name, callback)
     on_exit = function(j, return_val)
       vim.schedule(function()
         if return_val ~= 0 then
-          local error_msg = table.concat(j:stderr_result(), "\n")
-          vim.notify("[dbt-power] Compile error: " .. error_msg, vim.log.levels.ERROR)
-          callback(nil)
+          -- Combine stdout and stderr for full error context
+          local stderr = table.concat(j:stderr_result(), "\n")
+          local stdout = table.concat(j:result(), "\n")
+          local full_error = stderr
+          if stdout ~= "" then
+            full_error = stdout .. "\n" .. stderr
+          end
+
+          callback({
+            error = full_error,
+            model_name = model_name,
+            project_root = project_root,
+          })
           return
         end
 
         -- Read compiled SQL
-        local compiled_sql = M.read_compiled_sql(project_root)
-        callback(compiled_sql)
+        local result = M.read_compiled_sql(project_root, model_name)
+        callback(result)
       end)
     end,
   }):start()
 end
 
 -- Read compiled SQL from target directory
-function M.read_compiled_sql(project_root)
+function M.read_compiled_sql(project_root, model_name)
+  local search_paths = {}
+
+  -- Try path 1: Relative path based on source file location
   local relative_path = vim.fn.expand("%:.")
   local compiled_path = string.format("%s/target/compiled/%s", project_root, relative_path)
+  table.insert(search_paths, compiled_path)
 
-  -- Try to read compiled file
   local file = io.open(compiled_path, "r")
-  if not file then
-    -- Try alternative path (without project name)
-    local model_name = vim.fn.expand("%:t")
-    local alt_path = vim.fn.glob(project_root .. "/target/compiled/**/" .. model_name)
-    if alt_path ~= "" then
-      file = io.open(alt_path, "r")
+  if file then
+    local content = file:read("*a")
+    file:close()
+    return {
+      compiled_sql = content,
+      search_paths = table.concat(search_paths, "\n"),
+    }
+  end
+
+  -- Try path 2: Glob search in target/compiled
+  local filename = vim.fn.expand("%:t")
+  local glob_pattern = project_root .. "/target/compiled/**/" .. filename
+  local alt_path = vim.fn.glob(glob_pattern)
+  if alt_path ~= "" then
+    table.insert(search_paths, alt_path)
+    file = io.open(alt_path, "r")
+    if file then
+      local content = file:read("*a")
+      file:close()
+      return {
+        compiled_sql = content,
+        search_paths = table.concat(search_paths, "\n"),
+      }
     end
   end
 
-  if not file then
-    return nil
-  end
-
-  local content = file:read("*all")
-  file:close()
-  return content
+  -- File not found
+  return {
+    error = nil,
+    compiled_sql = nil,
+    search_paths = table.concat(search_paths, "\n") .. "\n\nTried to find: " .. filename,
+  }
 end
 
 -- Show content in split window
@@ -205,6 +244,35 @@ function M.teardown_auto_compile()
   end
 
   vim.api.nvim_del_augroup_by_name("DbtPowerAutoCompile")
+end
+
+-- Show detailed error information
+function M.show_error_details(title, error_msg)
+  -- Show as notification first
+  vim.notify(title, vim.log.levels.ERROR, {
+    title = "dbt-power Compile Error",
+    timeout = 0,  -- Don't auto-dismiss
+  })
+
+  -- Open quickfix list with error details
+  local qf_entries = {}
+  local lines = vim.split(error_msg or "", "\n")
+
+  for i, line in ipairs(lines) do
+    if vim.trim(line) ~= "" then
+      table.insert(qf_entries, {
+        text = line,
+        lnum = i,
+        col = 1,
+      })
+    end
+  end
+
+  if #qf_entries > 0 then
+    vim.fn.setqflist(qf_entries)
+    -- Auto-open quickfix window
+    vim.cmd("copen")
+  end
 end
 
 -- Get model name from current file
