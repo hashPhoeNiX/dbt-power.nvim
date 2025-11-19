@@ -81,32 +81,19 @@ function M.preview_cte(cte_name, callback)
 
         -- Read compiled SQL - find it in target/compiled by searching for model name
         -- Compiled structure: target/compiled/<project_name>/models/<path>/<model_name>.sql
-        local compiled_dir = project_root .. "/target/compiled"
         local compiled_path = nil
 
-        -- Search for the compiled file by walking the directory tree
-        local function find_compiled_file(dir, target_name)
-          local handle = vim.fn.glob(dir .. "/*", 1, 1)
-          if not handle or #handle == 0 then
-            return nil
-          end
-
-          for _, entry in ipairs(handle) do
-            if vim.fn.isdirectory(entry) == 1 then
-              -- Recurse into directories
-              local result = find_compiled_file(entry, target_name)
-              if result then return result end
-            else
-              -- Check if filename matches model name
-              if entry:match(target_name .. "%.sql$") then
-                return entry
-              end
-            end
-          end
-          return nil
+        -- Use find command for reliable search by model name
+        -- Sort by modification time (newest first) to get most recent compilation
+        local search_cmd = string.format(
+          "find %s/target/compiled -name '%s.sql' -type f 2>/dev/null | sort -r | head -1",
+          project_root,
+          vim.fn.shellescape(model_name)
+        )
+        local result = vim.fn.system(search_cmd)
+        if result and vim.trim(result) ~= "" then
+          compiled_path = vim.trim(result)
         end
-
-        compiled_path = find_compiled_file(compiled_dir, model_name)
 
         if not compiled_path then
           vim.notify("[dbt-power] Could not find compiled SQL for model: " .. model_name, vim.log.levels.ERROR)
@@ -225,33 +212,20 @@ function M.preview_cte_with_snowsql(cte_name, callback)
         local compile_end = vim.loop.hrtime()
         local compile_ms = math.floor((compile_end - compile_start) / 1000000)
 
-        -- Read compiled SQL
-        local compiled_dir = project_root .. "/target/compiled"
+        -- Read compiled SQL - find it in target/compiled by searching for model name
         local compiled_path = nil
 
-        -- Search for the compiled file by walking the directory tree
-        local function find_compiled_file(dir, target_name)
-          local handle = vim.fn.glob(dir .. "/*", 1, 1)
-          if not handle or #handle == 0 then
-            return nil
-          end
-
-          for _, entry in ipairs(handle) do
-            if vim.fn.isdirectory(entry) == 1 then
-              -- Recurse into directories
-              local result = find_compiled_file(entry, target_name)
-              if result then return result end
-            else
-              -- Check if filename matches model name
-              if entry:match(target_name .. "%.sql$") then
-                return entry
-              end
-            end
-          end
-          return nil
+        -- Use find command for reliable search by model name
+        -- Sort by modification time (newest first) to get most recent compilation
+        local search_cmd = string.format(
+          "find %s/target/compiled -name '%s.sql' -type f 2>/dev/null | sort -r | head -1",
+          project_root,
+          vim.fn.shellescape(model_name)
+        )
+        local result = vim.fn.system(search_cmd)
+        if result and vim.trim(result) ~= "" then
+          compiled_path = vim.trim(result)
         end
-
-        compiled_path = find_compiled_file(compiled_dir, model_name)
 
         if not compiled_path then
           vim.notify("[dbt-power] Could not find compiled SQL for model: " .. model_name, vim.log.levels.ERROR)

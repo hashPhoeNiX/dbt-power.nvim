@@ -97,7 +97,31 @@ end
 function M.read_compiled_sql(project_root, model_name)
   local search_paths = {}
 
-  -- Try path 1: Relative path based on source file location
+  -- Strategy: Try to find by model_name first (most reliable), then fallback to current buffer path
+  if model_name then
+    -- Try path 1: Find by exact model name in target/compiled
+    local search_cmd = string.format(
+      "find %s/target/compiled -name '%s.sql' -type f 2>/dev/null | sort -r | head -1",
+      project_root,
+      vim.fn.shellescape(model_name)
+    )
+    local result = vim.fn.system(search_cmd)
+    if result and vim.trim(result) ~= "" then
+      local found_path = vim.trim(result)
+      table.insert(search_paths, found_path)
+      local file = io.open(found_path, "r")
+      if file then
+        local content = file:read("*a")
+        file:close()
+        return {
+          compiled_sql = content,
+          search_paths = table.concat(search_paths, "\n"),
+        }
+      end
+    end
+  end
+
+  -- Fallback: Try path based on source file location (current buffer)
   local relative_path = vim.fn.expand("%:.")
   local compiled_path = string.format("%s/target/compiled/%s", project_root, relative_path)
   table.insert(search_paths, compiled_path)
@@ -112,7 +136,7 @@ function M.read_compiled_sql(project_root, model_name)
     }
   end
 
-  -- Try path 2: Glob search in target/compiled
+  -- Last resort: Glob search in target/compiled
   local filename = vim.fn.expand("%:t")
   local glob_pattern = project_root .. "/target/compiled/**/" .. filename
   local alt_path = vim.fn.glob(glob_pattern)

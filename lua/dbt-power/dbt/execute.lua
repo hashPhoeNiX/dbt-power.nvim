@@ -727,7 +727,30 @@ end
 
 -- Read compiled SQL from target directory
 function M.read_compiled_sql(project_root, model_name)
-  -- Try to find compiled file using model name
+  -- When model_name is provided, use it to find the compiled file
+  -- This is important for adhoc models which may not match current buffer path
+
+  if model_name then
+    -- Search for compiled file by model name in target/compiled directory
+    -- Use find to search recursively since dbt projects can have nested structures
+    local search_cmd = string.format(
+      "find %s/target/compiled -name '%s.sql' -type f 2>/dev/null | sort -r | head -1",
+      project_root,
+      vim.fn.shellescape(model_name)
+    )
+    local result = vim.fn.system(search_cmd)
+    if result and vim.trim(result) ~= "" then
+      local found_path = vim.trim(result)
+      local file = io.open(found_path, "r")
+      if file then
+        local content = file:read("*a")
+        file:close()
+        return content
+      end
+    end
+  end
+
+  -- Fallback: Use current buffer's path (for non-adhoc models)
   local relative_path = vim.fn.expand("%:.")  -- Current file relative path
   local compiled_path = project_root .. "/target/compiled/" .. relative_path:gsub("%.sql$", ".sql")
 
@@ -737,23 +760,6 @@ function M.read_compiled_sql(project_root, model_name)
     local content = file:read("*a")
     file:close()
     return content
-  end
-
-  -- Fallback: Search for compiled file by model name
-  local search_cmd = string.format(
-    "find %s/target/compiled -name '%s.sql' -type f 2>/dev/null | head -1",
-    project_root,
-    model_name
-  )
-  local result = vim.fn.system(search_cmd)
-  if result and result ~= "" then
-    local found_path = vim.trim(result)
-    file = io.open(found_path, "r")
-    if file then
-      local content = file:read("*a")
-      file:close()
-      return content
-    end
   end
 
   return nil
