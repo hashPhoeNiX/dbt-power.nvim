@@ -70,12 +70,19 @@ function M.create_keymaps()
   local km = M.config.keymaps
   if not km then return end
 
-  -- Compile preview
+  -- Compile preview (normal mode)
   if km.compile_preview then
     vim.keymap.set("n", km.compile_preview, function()
       require("dbt-power.preview").show_compiled_sql()
-    end, { desc = "Preview compiled SQL", noremap = true, silent = false })
+    end, { desc = "Preview compiled SQL (model)", noremap = true, silent = false })
   end
+
+  -- Compile preview for visual selection
+  vim.keymap.set("v", "<leader>dv", ":<C-u>lua require('dbt-power.preview').show_compiled_sql_for_selection()<CR>", {
+    noremap = true,
+    silent = false,
+    desc = "Preview compiled SQL (selection)",
+  })
 
   -- Execute with dbt show - inline results
   vim.keymap.set("n", "<leader>ds", function()

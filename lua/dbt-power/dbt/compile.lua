@@ -47,6 +47,126 @@ function M.show_compiled_sql()
   end)
 end
 
+-- Show compiled SQL for visual selection in split window
+function M.show_compiled_sql_for_selection()
+  local bufnr = vim.api.nvim_get_current_buf()
+
+  -- Try to get visual selection using marks
+  local start_pos = vim.fn.getpos("'<")
+  local end_pos = vim.fn.getpos("'>")
+
+  local selected_sql = nil
+
+  if start_pos[2] ~= 0 and end_pos[2] ~= 0 then
+    -- Marks are available
+    local start_line = start_pos[2] - 1  -- 0-indexed
+    local end_line = end_pos[2]
+    local start_col = start_pos[3] - 1
+    local end_col = end_pos[3]
+
+    -- Get selected lines
+    local selected_lines = vim.api.nvim_buf_get_lines(bufnr, start_line, end_line, false)
+    if #selected_lines > 0 then
+      -- Handle multi-line selection
+      if #selected_lines == 1 then
+        -- Single line: extract from start_col to end_col
+        selected_sql = selected_lines[1]:sub(start_col + 1, end_col)
+      else
+        -- Multi-line: first line from start_col, last line to end_col
+        selected_lines[1] = selected_lines[1]:sub(start_col + 1)
+        selected_lines[#selected_lines] = selected_lines[#selected_lines]:sub(1, end_col)
+        selected_sql = table.concat(selected_lines, "\n")
+      end
+    end
+  end
+
+  -- Fallback: try to get selection from unnamed register
+  if not selected_sql or vim.trim(selected_sql) == "" then
+    vim.cmd("noautocmd normal! \"vy\"")
+    selected_sql = vim.fn.getreg('"')
+  end
+
+  if not selected_sql or vim.trim(selected_sql) == "" then
+    vim.notify("[dbt-power] No selection found. Use visual mode (v) to select SQL", vim.log.levels.WARN)
+    return
+  end
+
+  -- Show loading indicator
+  vim.notify("[dbt-power] Compiling selection...", vim.log.levels.INFO)
+
+  -- Trim the selected SQL and ensure it's clean
+  selected_sql = vim.trim(selected_sql)
+
+  -- Remove trailing semicolon if present
+  selected_sql = selected_sql:gsub("%s*;%s*$", "")
+
+  -- Wrap with CTE to ensure proper SQL structure (for Jinja2 expansion)
+  selected_sql = "WITH cte AS (\n  " .. selected_sql .. "\n)\nSELECT * FROM cte"
+
+  -- Create a temporary ad-hoc model from the selection
+  local project_root = require("dbt-power.utils.project").find_dbt_project()
+  if not project_root then
+    vim.notify("[dbt-power] Could not find dbt project root", vim.log.levels.ERROR)
+    return
+  end
+
+  -- Create adhoc directory if it doesn't exist
+  local adhoc_dir = project_root .. "/models/adhoc"
+  local stat = vim.fn.getfperm(adhoc_dir)
+  if stat == "" then
+    vim.fn.mkdir(adhoc_dir, "p")
+  end
+
+  -- Generate filename with timestamp for uniqueness
+  local timestamp = os.date("%Y%m%d_%H%M%S")
+  local micro = math.floor(vim.loop.hrtime() / 1000) % 1000
+  local model_name = "adhoc_selection_" .. timestamp .. "_" .. string.format("%03d", micro)
+  local model_path = adhoc_dir .. "/" .. model_name .. ".sql"
+
+  -- Write the selected SQL to the temporary model
+  local file = io.open(model_path, "w")
+  if not file then
+    vim.notify("[dbt-power] Failed to create temporary model file", vim.log.levels.ERROR)
+    return
+  end
+
+  local final_content = string.format("-- Temporary ad-hoc model from visual selection\n-- %s\n\n%s\n", os.date("%Y-%m-%d %H:%M:%S"), selected_sql)
+  file:write(final_content)
+  file:close()
+
+  -- Store model name for later execution from preview buffer
+  M.preview_model_name = model_name
+
+  -- Compile the ad-hoc model
+  M.compile_model(model_name, function(result)
+    if result.error then
+      -- Show error with full details
+      M.show_error_details("Compilation failed for selection", result.error)
+      -- Clean up the temporary file on error
+      os.remove(model_path)
+      return
+    end
+
+    if not result.compiled_sql then
+      -- File not found after successful compile
+      M.show_error_details(
+        "Compilation succeeded but compiled SQL file not found for selection",
+        "Searched paths:\n" .. (result.search_paths or "No paths recorded")
+      )
+      os.remove(model_path)
+      return
+    end
+
+    -- Create or update preview window
+    M.show_in_split(result.compiled_sql)
+
+    -- Clean up the temporary file after showing
+    vim.schedule(function()
+      os.remove(model_path)
+    end)
+  end)
+end
+
 -- Compile dbt model
 function M.compile_model(model_name, callback)
   local project_root = require("dbt-power.utils.project").find_dbt_project()
