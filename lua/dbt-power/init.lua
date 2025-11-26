@@ -34,11 +34,16 @@ M.config = {
     api_key = nil,
   },
 
+  picker = {
+    default = "telescope", -- "telescope" or "fzf"
+  },
+
   keymaps = {
     compile_preview = "<leader>dv",
     execute_inline = "<C-CR>",
     clear_results = "<leader>dC",
     toggle_auto_compile = "<leader>dA",
+    model_picker = "<leader>dm",
   },
 }
 
@@ -52,6 +57,7 @@ function M.setup(opts)
   require("dbt-power.dbt.compile").setup(M.config)
   require("dbt-power.dbt.execute").setup(M.config)
   require("dbt-power.dbt.build").setup(M.config)
+  require("dbt-power.dbt.picker").setup(M.config.picker)
 
   -- Set up commands
   M.create_commands()
@@ -183,6 +189,17 @@ function M.create_keymaps()
     noremap = true,
     silent = false,
   })
+
+  -- Model picker
+  if km.model_picker then
+    vim.keymap.set("n", km.model_picker, function()
+      require("dbt-power.dbt.picker").open_model_picker()
+    end, {
+      desc = "Pick and open dbt model",
+      noremap = true,
+      silent = false,
+    })
+  end
 end
 
 -- Create user commands
@@ -206,6 +223,10 @@ function M.create_commands()
   vim.api.nvim_create_user_command("DbtAdHoc", function()
     require("dbt-power.dbt.adhoc").create_adhoc_model()
   end, { desc = "Create a temporary ad-hoc dbt model for testing" })
+
+  vim.api.nvim_create_user_command("DbtPicker", function()
+    require("dbt-power.dbt.picker").open_model_picker()
+  end, { desc = "Open model picker (Telescope or fzf-lua)" })
 end
 
 -- Create autocommands
