@@ -1,12 +1,13 @@
 -- Model picker for dbt-power.nvim
--- Supports both Telescope and fzf-lua with configurable default
--- Features: fuzzy search, quick actions, model preview
+-- Supports both Telescope and fzf-lua with configurable backend
+-- Default: fzf-lua (faster, lighter weight)
+-- Features: fuzzy search, quick actions, file preview (bat or cat)
 
 local M = {}
 local Job = require("plenary.job")
 
 M.config = {
-  picker = "telescope", -- "telescope" or "fzf" (default: telescope)
+  picker = "fzf", -- "telescope" or "fzf" (default: fzf)
 }
 
 -- Available actions when selecting a model
@@ -232,6 +233,13 @@ end
 
 -- Convenience wrapper: show picker and perform action
 function M.open_model_picker()
+  local picker_name = M.config.picker == "fzf" and "fzf-lua" or "Telescope"
+  local help_text = M.config.picker == "fzf"
+    and "↵:open | C-p:preview | C-x:execute | C-b:build"
+    or "↵:open | C-p:preview | C-x:execute | C-b:build"
+
+  vim.notify(string.format("[dbt-power] Opening %s model picker... (%s)", picker_name, help_text), vim.log.levels.INFO)
+
   M.pick_model(function(model, action)
     if action == M.ACTIONS.open then
       -- Open model file in current buffer
@@ -261,20 +269,29 @@ end
 function M.check()
   vim.health.start("dbt-power.picker")
 
+  vim.health.info(string.format("Configured picker: %s", M.config.picker))
+
   if M.config.picker == "telescope" then
     local ok = pcall(require, "telescope")
     if ok then
-      vim.health.ok("Telescope is installed")
+      vim.health.ok("Telescope is installed and ready")
     else
-      vim.health.error("Telescope not found (required for picker mode)")
+      vim.health.error("Telescope not found (required for telescope picker mode)")
     end
   elseif M.config.picker == "fzf" then
     local ok = pcall(require, "fzf-lua")
     if ok then
-      vim.health.ok("fzf-lua is installed")
+      vim.health.ok("fzf-lua is installed and ready")
     else
-      vim.health.error("fzf-lua not found (required for picker mode)")
+      vim.health.error("fzf-lua not found (required for fzf picker mode)")
     end
+  end
+
+  -- Check for preview tool
+  if vim.fn.executable("bat") == 1 then
+    vim.health.ok("bat is installed (for syntax-highlighted preview)")
+  else
+    vim.health.warn("bat not found (preview will use plain cat)")
   end
 end
 
