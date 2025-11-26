@@ -158,49 +158,63 @@ local function fzf_picker(on_select)
     return
   end
 
-  -- Create display strings with actions hint
+  -- Create display strings with full paths for preview
   local items = {}
   for _, model in ipairs(models) do
-    table.insert(items, model.display .. " (↵:open | C-p:preview | C-x:execute | C-b:build)")
+    -- Format: display_name<TAB>full_path
+    table.insert(items, model.display .. "\t" .. model.full_path)
   end
+
+  -- Determine which previewer to use (bat with fallback to cat)
+  local previewer_cmd = vim.fn.executable("bat") == 1 and "bat" or "cat"
+  local preview_opts = previewer_cmd == "bat" and "--theme=ansi --line-number --color=always" or ""
 
   fzf.fzf_exec(items, {
     prompt = "dbt Models> ",
-    previewer = {
-      _ctor = function()
-        return {
-          cmd = "cat",
-          args = { models[1].full_path }, -- Will be updated on each selection
-        }
-      end,
-    },
+    previewer = previewer_cmd,
+    preview_opts = preview_opts,
+    previewer_type = previewer_cmd,
     actions = {
       -- Default action: open file
       ["default"] = function(selected)
-        local idx = tonumber(selected[1]:match("^(%d+)"))
-        if idx and models[idx] then
-          on_select(models[idx], M.ACTIONS.open)
+        -- Extract the model name from the first column (before the tab)
+        local display = selected[1]:match("^([^\t]+)")
+        -- Find the model by display name
+        for i, model in ipairs(models) do
+          if model.display == display then
+            on_select(model, M.ACTIONS.open)
+            break
+          end
         end
       end,
       -- Custom action: preview compiled SQL (C-p)
       ["ctrl-p"] = function(selected)
-        local idx = tonumber(selected[1]:match("^(%d+)"))
-        if idx and models[idx] then
-          on_select(models[idx], M.ACTIONS.preview)
+        local display = selected[1]:match("^([^\t]+)")
+        for i, model in ipairs(models) do
+          if model.display == display then
+            on_select(model, M.ACTIONS.preview)
+            break
+          end
         end
       end,
       -- Custom action: execute (C-x)
       ["ctrl-x"] = function(selected)
-        local idx = tonumber(selected[1]:match("^(%d+)"))
-        if idx and models[idx] then
-          on_select(models[idx], M.ACTIONS.execute)
+        local display = selected[1]:match("^([^\t]+)")
+        for i, model in ipairs(models) do
+          if model.display == display then
+            on_select(model, M.ACTIONS.execute)
+            break
+          end
         end
       end,
       -- Custom action: build (C-b)
       ["ctrl-b"] = function(selected)
-        local idx = tonumber(selected[1]:match("^(%d+)"))
-        if idx and models[idx] then
-          on_select(models[idx], M.ACTIONS.build)
+        local display = selected[1]:match("^([^\t]+)")
+        for i, model in ipairs(models) do
+          if model.display == display then
+            on_select(model, M.ACTIONS.build)
+            break
+          end
         end
       end,
     },
