@@ -102,6 +102,7 @@ local function telescope_picker(on_select)
           value = entry,
           display = entry.display,
           ordinal = entry.display,
+          filename = entry.full_path,  -- Required by file_previewer
         }
       end,
     }),
