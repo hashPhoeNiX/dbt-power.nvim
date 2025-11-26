@@ -168,13 +168,21 @@ local function fzf_picker(on_select)
 
   -- Determine which previewer to use (bat with fallback to cat)
   local previewer_cmd = vim.fn.executable("bat") == 1 and "bat" or "cat"
-  local preview_opts = previewer_cmd == "bat" and "--theme=ansi --line-number --color=always" or ""
+  local preview_args = previewer_cmd == "bat" and "--theme=ansi --line-number --color=always" or ""
 
   fzf.fzf_exec(items, {
     prompt = "dbt Models> ",
-    previewer = previewer_cmd,
-    preview_opts = preview_opts,
-    previewer_type = previewer_cmd,
+    previewer = {
+      cmd = previewer_cmd,
+      args = preview_args,
+    },
+    winopts = {
+      preview = {
+        hidden = "nohidden",
+        layout = "vertical",
+        vertical = "up:50%",
+      },
+    },
     actions = {
       -- Default action: open file
       ["default"] = function(selected)
