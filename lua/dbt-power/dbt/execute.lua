@@ -141,8 +141,7 @@ function M.execute_with_direct_query_buffer()
     local compile_ms = math.floor((compile_end - compile_start) / 1000000)
 
     if not compiled_sql then
-      buffer_output.clear_loading()
-      vim.notify("[dbt-power] Compilation failed for model: " .. model_name, vim.log.levels.ERROR, { timeout = 5000 })
+      vim.notify("[dbt-power] Compilation failed for model: " .. model_name, vim.log.levels.ERROR, { timeout = 5000, replace = loading_notif_id })
       return
     end
 
@@ -156,9 +155,8 @@ function M.execute_with_direct_query_buffer()
       local query_end = vim.loop.hrtime()
       local query_ms = math.floor((query_end - query_start) / 1000000)
 
-      buffer_output.clear_loading()
-
       if results.error then
+        vim.notify("[dbt-power] Error: " .. results.error, vim.log.levels.ERROR, { timeout = 5000, replace = loading_notif_id })
         M.show_error_details("snowsql execution failed for model: " .. model_name, results.error)
         return
       end
