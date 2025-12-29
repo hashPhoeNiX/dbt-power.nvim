@@ -8,6 +8,9 @@ A Neovim plugin for dbt development with Power User-like features, including inl
 - ✅ **Inline Query Results**: Execute SQL and see results inline using extmarks (like Jupyter notebooks)
 - ✅ **Compiled SQL Preview**: View compiled dbt models in a split window, with execution from preview
 - ✅ **Buffer Results Display**: Execute models and display results in a dedicated buffer window
+- ✅ **Model Picker**: Browse and open dbt models with fuzzy search (Telescope or fzf-lua)
+- ✅ **Build Commands**: Build models with dependency graph support (upstream/downstream/all)
+- ✅ **CTE Preview**: Extract and preview Common Table Expressions from your SQL
 - ✅ **Ad-hoc Temporary Models**: Create temporary dbt models for testing, auto-ignored by git
 - ✅ **Intelligent Error Handling**: Display actual dbt compilation and execution errors (not generic failures)
 - ✅ **Visual Selection Execution**: Execute any SQL selection from your editor
@@ -21,9 +24,11 @@ A Neovim plugin for dbt development with Power User-like features, including inl
 
 - Neovim >= 0.10.0
 - [plenary.nvim](https://github.com/nvim-lua/plenary.nvim)
-- [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
-- [vim-dadbod](https://github.com/tpope/vim-dadbod) (optional but recommended)
-- [dbtpal](https://github.com/PedramNavid/dbtpal) (optional)
+- **One of the following** (for model picker):
+  - [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) OR
+  - [fzf-lua](https://github.com/ibhagwan/fzf-lua)
+- [vim-dadbod](https://github.com/tpope/vim-dadbod) (optional, for local database connections)
+- [dbtpal](https://github.com/PedramNavid/dbtpal) (optional, for additional dbt utilities)
 - dbt Cloud CLI or dbt Core
 
 ## Quick Start
@@ -37,9 +42,11 @@ A Neovim plugin for dbt development with Power User-like features, including inl
    Follow installation steps below
 
 3. **Open a dbt model file** and try:
-   - `<leader>dv` - Preview compiled SQL
-   - `<leader>dS` - Execute and view results
-   - `<leader>da` - Create ad-hoc test model
+   - `<leader>dm` or `:dbt models` - Browse all models with fuzzy search
+   - `<leader>dv` or `:dbt preview` - Preview compiled SQL
+   - `<leader>dS` or `:dbt execute_buffer` - Execute and view results
+   - `<leader>dbm` or `:dbt build` - Build current model
+   - `<leader>da` or `:dbt adhoc` - Create ad-hoc test model
 
 ## Installation
 
@@ -51,8 +58,13 @@ A Neovim plugin for dbt development with Power User-like features, including inl
   name = "dbt-power",
   dependencies = {
     "nvim-lua/plenary.nvim",
-    "nvim-telescope/telescope.nvim",
-    "PedramNavid/dbtpal",
+    -- Choose ONE of the following for model picker:
+    "nvim-telescope/telescope.nvim",  -- OR
+    -- "ibhagwan/fzf-lua",
+
+    -- Optional dependencies:
+    -- "tpope/vim-dadbod",     -- For local database connections
+    -- "PedramNavid/dbtpal",   -- For additional dbt utilities
   },
   dev = true,
   ft = { "sql", "yaml", "md" },
@@ -71,7 +83,7 @@ A Neovim plugin for dbt development with Power User-like features, including inl
 }
 ```
 
-**Note:** vim-dadbod is optional. Install it only if you want local database connections.
+**Note:** Only one picker (Telescope or fzf-lua) is required for the model picker feature. vim-dadbod and dbtpal are optional.
 
 ## Usage
 
@@ -82,10 +94,16 @@ A Neovim plugin for dbt development with Power User-like features, including inl
 | `<leader>dv` | Preview compiled SQL in split | Normal |
 | `<leader>dS` | Execute model → results in buffer | Normal |
 | `<leader>ds` | Execute model → inline results | Normal |
+| `<leader>dm` | Open model picker (browse all models) | Normal |
 | `<leader>da` | Create ad-hoc temporary model | Normal |
 | `<leader>dC` | Clear inline results | Normal |
 | `<leader>dA` | Toggle auto-compile mode | Normal |
+| `<leader>dq` | Preview CTE (Common Table Expression) | Normal |
 | `<leader>dx` | Execute visual selection | Visual |
+| `<leader>dbm` | Build current model | Normal |
+| `<leader>dbu` | Build with upstream dependencies (+) | Normal |
+| `<leader>dbd` | Build with downstream dependencies (+) | Normal |
+| `<leader>dba` | Build all dependencies (@) | Normal |
 
 ### Workflow Examples
 
@@ -125,6 +143,32 @@ A Neovim plugin for dbt development with Power User-like features, including inl
 1. Select SQL in visual mode (V)
 2. Press <leader>dx → Execute selection inline
 3. Results appear below selection
+```
+
+#### 6. Model Picker - Browse All Models
+```
+1. Press <leader>dm         → Open fuzzy finder with all dbt models
+2. Type to filter models    → Search by name or path
+3. Press Enter              → Open selected model
+4. Or preview in split      → See model before opening
+```
+
+#### 7. Build with Dependencies
+```
+1. Open a dbt model file
+2. Press <leader>dbm        → Build just this model
+3. Or <leader>dbu           → Build with upstream dependencies (+model)
+4. Or <leader>dbd           → Build with downstream dependencies (model+)
+5. Or <leader>dba           → Build all dependencies (@model)
+6. View build output in buffer
+```
+
+#### 8. CTE Preview
+```
+1. Open a dbt model with CTEs
+2. Press <leader>dq         → Select a CTE from list
+3. View CTE execution results
+4. Debug individual CTEs before full model
 ```
 
 ### Error Handling
@@ -240,11 +284,37 @@ require("dbt-power").setup({
 
 ## Commands
 
-- `:DbtPreview` - Show compiled SQL in split window
-- `:DbtExecute` - Execute current model and show results inline
-- `:DbtClearResults` - Clear all inline results from current buffer
-- `:DbtToggleAutoCompile` - Toggle auto-compile mode (live preview as you type)
-- `:DbtAdHoc` - Create a new temporary ad-hoc model for testing
+The plugin provides commands in two styles:
+1. **PascalCase** (e.g., `:DbtPreview`) - traditional Neovim style
+2. **Subcommand** (e.g., `:dbt preview`) - Git-style with tab completion
+
+Both styles do the same thing - use whichever you prefer!
+
+### Execution & Preview
+| PascalCase | Subcommand | Description |
+|-----------|-----------|-------------|
+| `:DbtPreview` | `:dbt preview` | Show compiled SQL in split window |
+| `:DbtExecute` | `:dbt execute` | Execute current model and show results inline |
+| `:DbtExecuteBuffer` | `:dbt execute_buffer` | Execute current model and show results in buffer window |
+| `:DbtClearResults` | `:dbt clear` | Clear all inline results from current buffer |
+| `:DbtToggleAutoCompile` | `:dbt toggle_auto_compile` | Toggle auto-compile mode (live preview as you type) |
+| `:DbtPreviewCTE` | `:dbt preview_cte` | Preview a Common Table Expression |
+
+### Model Management
+| PascalCase | Subcommand | Description |
+|-----------|-----------|-------------|
+| `:DbtModels` | `:dbt models` | Open model picker to browse and select models |
+| `:DbtAdHoc` | `:dbt adhoc` | Create a new temporary ad-hoc model for testing |
+
+### Build Commands
+| PascalCase | Subcommand | Description |
+|-----------|-----------|-------------|
+| `:DbtBuildModel` | `:dbt build` | Build the current model |
+| `:DbtBuildUpstream` | `:dbt build_upstream` | Build current model with upstream dependencies (+) |
+| `:DbtBuildDownstream` | `:dbt build_downstream` | Build current model with downstream dependencies (+) |
+| `:DbtBuildAll` | `:dbt build_all` | Build current model with all dependencies (@) |
+
+**Pro Tip**: The `:dbt` command has tab completion! Type `:dbt <Tab>` to see all available subcommands.
 
 ### Ad-Hoc Model Management
 
@@ -277,6 +347,9 @@ Core features are complete and stable. Additional features planned:
 - [x] Ad-hoc temporary models
 - [x] Intelligent error handling
 - [x] Execution from preview buffer
+- [x] Model picker (Telescope/fzf-lua)
+- [x] Build commands with dependency graph
+- [x] CTE preview and execution
 
 **Planned:**
 - [ ] AI documentation generation

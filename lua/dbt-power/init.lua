@@ -204,6 +204,7 @@ end
 
 -- Create user commands
 function M.create_commands()
+  -- Individual commands (PascalCase style)
   vim.api.nvim_create_user_command("DbtPreview", function()
     require("dbt-power.preview").show_compiled_sql()
   end, { desc = "Show compiled SQL in split" })
@@ -211,6 +212,10 @@ function M.create_commands()
   vim.api.nvim_create_user_command("DbtExecute", function()
     require("dbt-power.execute").execute_and_show_inline()
   end, { desc = "Execute query and show results inline" })
+
+  vim.api.nvim_create_user_command("DbtExecuteBuffer", function()
+    require("dbt-power.execute").execute_with_dbt_show_buffer()
+  end, { desc = "Execute query and show results in buffer" })
 
   vim.api.nvim_create_user_command("DbtClearResults", function()
     require("dbt-power.ui.inline_results").clear_all()
@@ -220,13 +225,93 @@ function M.create_commands()
     require("dbt-power.preview").toggle_auto_compile()
   end, { desc = "Toggle auto-compile preview" })
 
+  vim.api.nvim_create_user_command("DbtPreviewCTE", function()
+    require("dbt-power.dbt.cte_preview").show_cte_picker()
+  end, { desc = "Preview Common Table Expression" })
+
   vim.api.nvim_create_user_command("DbtAdHoc", function()
     require("dbt-power.dbt.adhoc").create_adhoc_model()
   end, { desc = "Create a temporary ad-hoc dbt model for testing" })
 
-  vim.api.nvim_create_user_command("DbtPicker", function()
+  vim.api.nvim_create_user_command("DbtModels", function()
     require("dbt-power.dbt.picker").open_model_picker()
   end, { desc = "Open model picker (Telescope or fzf-lua)" })
+
+  -- Build commands
+  vim.api.nvim_create_user_command("DbtBuildModel", function()
+    require("dbt-power.dbt.build").build_current_model()
+  end, { desc = "Build current model" })
+
+  vim.api.nvim_create_user_command("DbtBuildUpstream", function()
+    require("dbt-power.dbt.build").build_upstream()
+  end, { desc = "Build with upstream dependencies" })
+
+  vim.api.nvim_create_user_command("DbtBuildDownstream", function()
+    require("dbt-power.dbt.build").build_downstream()
+  end, { desc = "Build with downstream dependencies" })
+
+  vim.api.nvim_create_user_command("DbtBuildAll", function()
+    require("dbt-power.dbt.build").build_all_dependencies()
+  end, { desc = "Build with all dependencies" })
+
+  -- Main :dbt command with subcommands (Git-style)
+  vim.api.nvim_create_user_command("dbt", function(opts)
+    local subcommand = opts.fargs[1]
+
+    if subcommand == "preview" then
+      require("dbt-power.preview").show_compiled_sql()
+    elseif subcommand == "execute" then
+      require("dbt-power.execute").execute_and_show_inline()
+    elseif subcommand == "execute_buffer" then
+      require("dbt-power.execute").execute_with_dbt_show_buffer()
+    elseif subcommand == "clear" then
+      require("dbt-power.ui.inline_results").clear_all()
+    elseif subcommand == "toggle_auto_compile" then
+      require("dbt-power.preview").toggle_auto_compile()
+    elseif subcommand == "preview_cte" then
+      require("dbt-power.dbt.cte_preview").show_cte_picker()
+    elseif subcommand == "adhoc" then
+      require("dbt-power.dbt.adhoc").create_adhoc_model()
+    elseif subcommand == "models" then
+      require("dbt-power.dbt.picker").open_model_picker()
+    elseif subcommand == "build" then
+      require("dbt-power.dbt.build").build_current_model()
+    elseif subcommand == "build_upstream" then
+      require("dbt-power.dbt.build").build_upstream()
+    elseif subcommand == "build_downstream" then
+      require("dbt-power.dbt.build").build_downstream()
+    elseif subcommand == "build_all" then
+      require("dbt-power.dbt.build").build_all_dependencies()
+    else
+      vim.notify(
+        "Unknown subcommand: " .. (subcommand or "nil") .. "\n" ..
+        "Available: preview, execute, execute_buffer, clear, toggle_auto_compile, preview_cte, adhoc, models, build, build_upstream, build_downstream, build_all",
+        vim.log.levels.ERROR
+      )
+    end
+  end, {
+    nargs = "+",
+    desc = "dbt-power commands",
+    complete = function(ArgLead, CmdLine, CursorPos)
+      local subcommands = {
+        "preview",
+        "execute",
+        "execute_buffer",
+        "clear",
+        "toggle_auto_compile",
+        "preview_cte",
+        "adhoc",
+        "models",
+        "build",
+        "build_upstream",
+        "build_downstream",
+        "build_all",
+      }
+      return vim.tbl_filter(function(cmd)
+        return cmd:find(ArgLead) == 1
+      end, subcommands)
+    end,
+  })
 end
 
 -- Create autocommands
