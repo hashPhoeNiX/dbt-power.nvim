@@ -1,6 +1,6 @@
 -- dbt-power.nvim
 -- A Neovim plugin for dbt development with Power User-like features
--- Inspired by Molten's inline display approach
+-- Inspired by VSCode dbt Power User extension using Molten's inline display approach
 
 local M = {}
 
@@ -24,7 +24,7 @@ M.config = {
   },
 
   database = {
-    use_dadbod = true,
+    use_dadbod = false,
     default_connection = nil,
   },
 
