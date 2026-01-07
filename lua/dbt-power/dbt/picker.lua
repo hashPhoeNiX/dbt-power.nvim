@@ -172,13 +172,30 @@ local function fzf_picker(on_select)
 
   -- Determine which previewer to use (bat with fallback to cat)
   local previewer_cmd = vim.fn.executable("bat") == 1 and "bat" or "cat"
-  local preview_args = previewer_cmd == "bat" and "--theme=ansi --line-number --color=always" or ""
 
   fzf.fzf_exec(items, {
     prompt = "dbt Models> ",
-    previewer = {
-      cmd = previewer_cmd,
-      args = preview_args,
+    -- Use fzf's field index expression to extract path (second field after tab)
+    fzf_opts = {
+      ["--delimiter"] = "\t",
+      ["--with-nth"] = "1",  -- Display only first field (model name)
+    },
+    previewer = previewer_cmd == "bat" and {
+      _ctor = function()
+        return fzf.shell.raw_preview_action_cmd(function(items)
+          -- Extract the second field (full_path) from the tab-delimited line
+          local path = items[1]:match("\t(.+)$")
+          return path and string.format("bat --theme=ansi --line-number --color=always %s", vim.fn.shellescape(path))
+        end)
+      end
+    } or {
+      _ctor = function()
+        return fzf.shell.raw_preview_action_cmd(function(items)
+          -- Extract the second field (full_path) from the tab-delimited line
+          local path = items[1]:match("\t(.+)$")
+          return path and string.format("cat %s", vim.fn.shellescape(path))
+        end)
+      end
     },
     winopts = {
       preview = {
