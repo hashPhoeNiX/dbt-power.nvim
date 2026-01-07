@@ -114,6 +114,7 @@ local function telescope_picker(on_select)
       actions.select_default:replace(function()
         actions.close(prompt_bufnr)
         local selection = action_state.get_selected_entry()
+        if not selection or not selection.value then return end
         on_select(selection.value, M.ACTIONS.open)
       end)
 
@@ -121,6 +122,7 @@ local function telescope_picker(on_select)
       map("i", "<C-p>", function()
         actions.close(prompt_bufnr)
         local selection = action_state.get_selected_entry()
+        if not selection or not selection.value then return end
         on_select(selection.value, M.ACTIONS.preview)
       end)
 
@@ -128,6 +130,7 @@ local function telescope_picker(on_select)
       map("i", "<C-x>", function()
         actions.close(prompt_bufnr)
         local selection = action_state.get_selected_entry()
+        if not selection or not selection.value then return end
         on_select(selection.value, M.ACTIONS.execute)
       end)
 
@@ -135,6 +138,7 @@ local function telescope_picker(on_select)
       map("i", "<C-b>", function()
         actions.close(prompt_bufnr)
         local selection = action_state.get_selected_entry()
+        if not selection or not selection.value then return end
         on_select(selection.value, M.ACTIONS.build)
       end)
 
@@ -186,8 +190,13 @@ local function fzf_picker(on_select)
     actions = {
       -- Default action: open file
       ["default"] = function(selected)
+        -- Guard against nil or empty selection
+        if not selected or #selected == 0 then return end
+
         -- Extract the model name from the first column (before the tab)
         local display = selected[1]:match("^([^\t]+)")
+        if not display then return end
+
         -- Find the model by display name
         for i, model in ipairs(models) do
           if model.display == display then
@@ -198,7 +207,12 @@ local function fzf_picker(on_select)
       end,
       -- Custom action: preview compiled SQL (C-p)
       ["ctrl-p"] = function(selected)
+        -- Guard against nil or empty selection
+        if not selected or #selected == 0 then return end
+
         local display = selected[1]:match("^([^\t]+)")
+        if not display then return end
+
         for i, model in ipairs(models) do
           if model.display == display then
             on_select(model, M.ACTIONS.preview)
@@ -208,7 +222,12 @@ local function fzf_picker(on_select)
       end,
       -- Custom action: execute (C-x)
       ["ctrl-x"] = function(selected)
+        -- Guard against nil or empty selection
+        if not selected or #selected == 0 then return end
+
         local display = selected[1]:match("^([^\t]+)")
+        if not display then return end
+
         for i, model in ipairs(models) do
           if model.display == display then
             on_select(model, M.ACTIONS.execute)
@@ -218,7 +237,12 @@ local function fzf_picker(on_select)
       end,
       -- Custom action: build (C-b)
       ["ctrl-b"] = function(selected)
+        -- Guard against nil or empty selection
+        if not selected or #selected == 0 then return end
+
         local display = selected[1]:match("^([^\t]+)")
+        if not display then return end
+
         for i, model in ipairs(models) do
           if model.display == display then
             on_select(model, M.ACTIONS.build)
