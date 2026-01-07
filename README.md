@@ -263,6 +263,13 @@ require("dbt-power").setup({
   database = {
     use_dadbod = true,
     default_connection = nil,
+    snowsql_connection = "default", -- Connection name from ~/.snowsql/config
+  },
+
+  -- Direct query execution (for snowsql bypass)
+  direct_query = {
+    max_rows = 100,              -- Row limit for direct queries
+    buffer_split_size = 30,      -- Split window height for results
   },
 
   -- AI features (coming soon)
@@ -270,6 +277,11 @@ require("dbt-power").setup({
     enabled = false,
     provider = "anthropic",
     api_key = os.getenv("ANTHROPIC_API_KEY"),
+  },
+
+  -- Model picker
+  picker = {
+    default = "telescope", -- "telescope" or "fzf"
   },
 
   -- Keymaps (set to false to disable)

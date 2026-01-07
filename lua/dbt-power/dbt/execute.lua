@@ -4,6 +4,10 @@ local M = {}
 local Job = require("plenary.job")
 local inline_results = require("dbt-power.ui.inline_results")
 
+-- Constants
+local MAX_PARSE_LINES = 1000  -- Safety limit to prevent infinite parsing loops
+local DEFAULT_LIMIT = 500      -- Default row limit for queries
+
 M.config = {}
 
 function M.setup(config)
@@ -421,7 +425,10 @@ function M.execute_selection()
   -- Write the selected SQL to the temporary model
   local file = io.open(model_path, "w")
   if not file then
-    vim.notify("[dbt-power] Failed to create temporary model file", vim.log.levels.ERROR)
+    vim.notify(
+      string.format("[dbt-power] Failed to create temporary model file at %s", model_path),
+      vim.log.levels.ERROR
+    )
     return
   end
 
@@ -535,7 +542,10 @@ function M.execute_selection_with_buffer()
   local file = io.open(model_path, "w")
   if not file then
     buffer_output.clear_loading()
-    vim.notify("[dbt-power] Failed to create temporary model file", vim.log.levels.ERROR)
+    vim.notify(
+      string.format("[dbt-power] Failed to create temporary model file at %s", model_path),
+      vim.log.levels.ERROR
+    )
     return
   end
 
@@ -679,7 +689,7 @@ function M.execute_dbt_model_power_user(callback)
     end
 
     -- STEP 2: Wrap with LIMIT clause (same as Power User)
-    local limit = M.config.inline_results.max_rows or 500
+    local limit = M.config.inline_results.max_rows or DEFAULT_LIMIT
     local wrapped_sql = M.wrap_with_limit(compiled_sql, limit)
 
     -- STEP 3: Execute wrapped SQL via vim-dadbod
@@ -732,9 +742,9 @@ function M.read_compiled_sql(project_root, model_name)
     -- Search for compiled file by model name in target/compiled directory
     -- Use find to search recursively since dbt projects can have nested structures
     local search_cmd = string.format(
-      "find %s/target/compiled -name '%s.sql' -type f 2>/dev/null | sort -r | head -1",
-      project_root,
-      vim.fn.shellescape(model_name)
+      "find %s/target/compiled -name %s -type f 2>/dev/null | sort -r | head -1",
+      vim.fn.shellescape(project_root),
+      vim.fn.shellescape(model_name .. ".sql")
     )
     local result = vim.fn.system(search_cmd)
     if result and vim.trim(result) ~= "" then
@@ -813,12 +823,18 @@ function M.execute_via_dadbod(sql, callback)
 
   local file = io.open(temp_file, "w")
   if not file then
-    callback({ error = "Could not create temp SQL file" })
+    callback({ error = string.format("Could not create temp SQL file at %s", temp_file) })
     return
   end
 
   file:write(sql)
   file:close()
+
+  -- Cleanup function to ensure temp files are always removed
+  local function cleanup()
+    pcall(os.remove, temp_file)
+    pcall(os.remove, output_file)
+  end
 
   -- Use dadbod to execute the query and save results to CSV
   local cmd = string.format(
@@ -833,13 +849,10 @@ function M.execute_via_dadbod(sql, callback)
     args = { "-c", cmd },
     on_exit = function(j, return_val)
       vim.schedule(function()
-        -- Clean up temp files
-        os.remove(temp_file)
-
         if return_val ~= 0 then
           local stderr = table.concat(j:stderr_result(), "\n")
           local stdout = table.concat(j:result(), "\n")
-          os.remove(output_file)
+          cleanup()
           local full_output = stderr
           if stdout ~= "" then
             full_output = stdout .. "\n" .. stderr
@@ -851,13 +864,14 @@ function M.execute_via_dadbod(sql, callback)
         -- Read and parse results
         local output = io.open(output_file, "r")
         if not output then
-          callback({ error = "Could not read query results" })
+          cleanup()
+          callback({ error = string.format("Could not read query results from %s", output_file) })
           return
         end
 
         local results = output:read("*a")
         output:close()
-        os.remove(output_file)
+        cleanup()
 
         -- Parse CSV results
         local parsed = M.parse_csv_results(results)
@@ -878,7 +892,7 @@ function M.execute_via_snowsql(sql, callback)
   local temp_file = vim.fn.tempname() .. ".sql"
   local file = io.open(temp_file, "w")
   if not file then
-    callback({ error = "Could not create temp SQL file" })
+    callback({ error = string.format("Could not create temp SQL file at %s", temp_file) })
     return
   end
 
@@ -886,14 +900,21 @@ function M.execute_via_snowsql(sql, callback)
   file:close()
 
   -- Execute via snowsql - uses connection from ~/.snowsql/config
-  -- Using snowflake_dev connection (can be made configurable)
+  -- Connection name is configurable via database.snowsql_connection
+  local connection = M.config.database and M.config.database.snowsql_connection or "default"
+
+  -- Cleanup function to ensure temp file is always removed
+  local function cleanup()
+    pcall(os.remove, temp_file)
+  end
+
   Job:new({
     command = "snowsql",
-    args = { "-c", "snowflake_dev", "-f", temp_file },
+    args = { "-c", connection, "-f", temp_file },
     on_exit = function(j, return_val)
       vim.schedule(function()
-        -- Clean up temp file
-        os.remove(temp_file)
+        -- Always clean up temp file, even on error
+        cleanup()
 
         if return_val ~= 0 then
           local stderr = table.concat(j:stderr_result(), "\n")
@@ -991,6 +1012,7 @@ function M.parse_snowsql_results(output)
 end
 
 -- Parse CSV results from query output
+-- Handles quoted values with commas inside (RFC 4180 compliant)
 function M.parse_csv_results(csv_content)
   local lines = vim.split(csv_content, "\n")
   local columns = {}
@@ -1000,22 +1022,54 @@ function M.parse_csv_results(csv_content)
     return { columns = {}, rows = {} }
   end
 
-  -- First line is header (comma-separated)
+  -- Helper function to parse a CSV line with proper quote handling
+  local function parse_csv_line(line)
+    local result = {}
+    local current_value = ""
+    local in_quotes = false
+    local i = 1
+
+    while i <= #line do
+      local char = line:sub(i, i)
+
+      if char == '"' then
+        if in_quotes and i < #line and line:sub(i + 1, i + 1) == '"' then
+          -- Escaped quote ("") - add one quote to value
+          current_value = current_value .. '"'
+          i = i + 1  -- Skip next quote
+        else
+          -- Toggle quote state
+          in_quotes = not in_quotes
+        end
+      elseif char == ',' and not in_quotes then
+        -- End of field
+        table.insert(result, vim.trim(current_value))
+        current_value = ""
+      else
+        -- Regular character
+        current_value = current_value .. char
+      end
+
+      i = i + 1
+    end
+
+    -- Add last field
+    table.insert(result, vim.trim(current_value))
+    return result
+  end
+
+  -- Parse header line
   local header_line = vim.trim(lines[1])
   if header_line ~= "" then
-    for col in header_line:gmatch("[^,]+") do
-      table.insert(columns, vim.trim(col))
-    end
+    columns = parse_csv_line(header_line)
   end
 
   -- Parse data rows
   for i = 2, #lines do
     local line = vim.trim(lines[i])
     if line ~= "" then
-      local row = {}
-      for value in line:gmatch("[^,]+") do
-        table.insert(row, vim.trim(value))
-      end
+      local row = parse_csv_line(line)
+      -- Only add rows with correct number of columns
       if #row == #columns then
         table.insert(rows, row)
       end
@@ -1032,7 +1086,7 @@ end
 function M.execute_with_dbt_show(project_root, model_name, callback)
   vim.notify("[dbt-power] Executing with dbt show command", vim.log.levels.INFO)
 
-  local limit = M.config.inline_results and M.config.inline_results.max_rows or 500
+  local limit = M.config.inline_results and M.config.inline_results.max_rows or DEFAULT_LIMIT
 
   local cmd = {
     M.config.dbt_cloud_cli or "dbt",
@@ -1199,7 +1253,7 @@ function M.parse_dbt_show_results(output)
 
   for i = header_idx + 1, #lines do
     -- Make sure we're still in the table section
-    if i > header_idx + 1000 then
+    if i > header_idx + MAX_PARSE_LINES then
       break  -- Safety check to avoid parsing too far
     end
     local line = lines[i]

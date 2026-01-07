@@ -26,6 +26,12 @@ M.config = {
   database = {
     use_dadbod = false,
     default_connection = nil,
+    snowsql_connection = "default", -- Snowflake connection name from ~/.snowsql/config
+  },
+
+  direct_query = {
+    max_rows = 100,
+    buffer_split_size = 30,
   },
 
   ai = {
@@ -47,8 +53,78 @@ M.config = {
   },
 }
 
+-- Validate configuration
+local function validate_config(config)
+  if not config then return true end
+
+  -- Validate inline_results.style
+  if config.inline_results and config.inline_results.style then
+    local valid_styles = { "markdown", "simple" }
+    if not vim.tbl_contains(valid_styles, config.inline_results.style) then
+      vim.notify(
+        string.format("[dbt-power] Invalid inline_results.style: '%s'. Must be 'markdown' or 'simple'", config.inline_results.style),
+        vim.log.levels.WARN
+      )
+      return false
+    end
+  end
+
+  -- Validate preview.split_position
+  if config.preview and config.preview.split_position then
+    local valid_positions = { "right", "below", "left", "above" }
+    if not vim.tbl_contains(valid_positions, config.preview.split_position) then
+      vim.notify(
+        string.format("[dbt-power] Invalid preview.split_position: '%s'. Must be one of: %s",
+          config.preview.split_position,
+          table.concat(valid_positions, ", ")),
+        vim.log.levels.WARN
+      )
+      return false
+    end
+  end
+
+  -- Validate picker.default
+  if config.picker and config.picker.default then
+    local valid_pickers = { "telescope", "fzf" }
+    if not vim.tbl_contains(valid_pickers, config.picker.default) then
+      vim.notify(
+        string.format("[dbt-power] Invalid picker.default: '%s'. Must be 'telescope' or 'fzf'", config.picker.default),
+        vim.log.levels.WARN
+      )
+      return false
+    end
+  end
+
+  -- Validate numeric values are positive
+  if config.inline_results then
+    if config.inline_results.max_rows and config.inline_results.max_rows < 1 then
+      vim.notify("[dbt-power] inline_results.max_rows must be positive", vim.log.levels.WARN)
+      return false
+    end
+    if config.inline_results.max_column_width and config.inline_results.max_column_width < 1 then
+      vim.notify("[dbt-power] inline_results.max_column_width must be positive", vim.log.levels.WARN)
+      return false
+    end
+  end
+
+  if config.direct_query then
+    if config.direct_query.max_rows and config.direct_query.max_rows < 1 then
+      vim.notify("[dbt-power] direct_query.max_rows must be positive", vim.log.levels.WARN)
+      return false
+    end
+  end
+
+  return true
+end
+
 -- Setup function
 function M.setup(opts)
+  -- Validate configuration before merging
+  if not validate_config(opts) then
+    vim.notify("[dbt-power] Configuration validation failed. Using defaults.", vim.log.levels.ERROR)
+    opts = {}
+  end
+
   -- Merge user config with defaults
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
 
