@@ -330,8 +330,8 @@ function M.create_commands()
     require("dbt-power.dbt.build").build_all_dependencies()
   end, { desc = "Build with all dependencies" })
 
-  -- Main :dbt command with subcommands (Git-style)
-  vim.api.nvim_create_user_command("dbt", function(opts)
+  -- Main :Dbt command with subcommands (Git-style)
+  vim.api.nvim_create_user_command("Dbt", function(opts)
     local subcommand = opts.fargs[1]
 
     if subcommand == "preview" then

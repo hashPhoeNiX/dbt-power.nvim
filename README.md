@@ -42,11 +42,11 @@ A Neovim plugin for dbt development with Power User-like features, including inl
    Follow installation steps below
 
 3. **Open a dbt model file** and try:
-   - `<leader>dm` or `:dbt models` - Browse all models with fuzzy search
-   - `<leader>dv` or `:dbt preview` - Preview compiled SQL
-   - `<leader>dS` or `:dbt execute_buffer` - Execute and view results
-   - `<leader>dbm` or `:dbt build` - Build current model
-   - `<leader>da` or `:dbt adhoc` - Create ad-hoc test model
+   - `<leader>dm` or `:Dbt models` - Browse all models with fuzzy search
+   - `<leader>dv` or `:Dbt preview` - Preview compiled SQL
+   - `<leader>dS` or `:Dbt execute_buffer` - Execute and view results
+   - `<leader>dbm` or `:Dbt build` - Build current model
+   - `<leader>da` or `:Dbt adhoc` - Create ad-hoc test model
 
 ## Installation
 
@@ -298,35 +298,35 @@ require("dbt-power").setup({
 
 The plugin provides commands in two styles:
 1. **PascalCase** (e.g., `:DbtPreview`) - traditional Neovim style
-2. **Subcommand** (e.g., `:dbt preview`) - Git-style with tab completion
+2. **Subcommand** (e.g., `:Dbt preview`) - Git-style with tab completion
 
 Both styles do the same thing - use whichever you prefer!
 
 ### Execution & Preview
 | PascalCase | Subcommand | Description |
 |-----------|-----------|-------------|
-| `:DbtPreview` | `:dbt preview` | Show compiled SQL in split window |
-| `:DbtExecute` | `:dbt execute` | Execute current model and show results inline |
-| `:DbtExecuteBuffer` | `:dbt execute_buffer` | Execute current model and show results in buffer window |
-| `:DbtClearResults` | `:dbt clear` | Clear all inline results from current buffer |
-| `:DbtToggleAutoCompile` | `:dbt toggle_auto_compile` | Toggle auto-compile mode (live preview as you type) |
-| `:DbtPreviewCTE` | `:dbt preview_cte` | Preview a Common Table Expression |
+| `:DbtPreview` | `:Dbt preview` | Show compiled SQL in split window |
+| `:DbtExecute` | `:Dbt execute` | Execute current model and show results inline |
+| `:DbtExecuteBuffer` | `:Dbt execute_buffer` | Execute current model and show results in buffer window |
+| `:DbtClearResults` | `:Dbt clear` | Clear all inline results from current buffer |
+| `:DbtToggleAutoCompile` | `:Dbt toggle_auto_compile` | Toggle auto-compile mode (live preview as you type) |
+| `:DbtPreviewCTE` | `:Dbt preview_cte` | Preview a Common Table Expression |
 
 ### Model Management
 | PascalCase | Subcommand | Description |
 |-----------|-----------|-------------|
-| `:DbtModels` | `:dbt models` | Open model picker to browse and select models |
-| `:DbtAdHoc` | `:dbt adhoc` | Create a new temporary ad-hoc model for testing |
+| `:DbtModels` | `:Dbt models` | Open model picker to browse and select models |
+| `:DbtAdHoc` | `:Dbt adhoc` | Create a new temporary ad-hoc model for testing |
 
 ### Build Commands
 | PascalCase | Subcommand | Description |
 |-----------|-----------|-------------|
-| `:DbtBuildModel` | `:dbt build` | Build the current model |
-| `:DbtBuildUpstream` | `:dbt build_upstream` | Build current model with upstream dependencies (+) |
-| `:DbtBuildDownstream` | `:dbt build_downstream` | Build current model with downstream dependencies (+) |
-| `:DbtBuildAll` | `:dbt build_all` | Build current model with all dependencies (@) |
+| `:DbtBuildModel` | `:Dbt build` | Build the current model |
+| `:DbtBuildUpstream` | `:Dbt build_upstream` | Build current model with upstream dependencies (+) |
+| `:DbtBuildDownstream` | `:Dbt build_downstream` | Build current model with downstream dependencies (+) |
+| `:DbtBuildAll` | `:Dbt build_all` | Build current model with all dependencies (@) |
 
-**Pro Tip**: The `:dbt` command has tab completion! Type `:dbt <Tab>` to see all available subcommands.
+**Pro Tip**: The `:Dbt` command has tab completion! Type `:Dbt <Tab>` to see all available subcommands.
 
 ### Ad-Hoc Model Management
 
