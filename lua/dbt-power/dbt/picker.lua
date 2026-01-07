@@ -163,27 +163,26 @@ local function fzf_picker(on_select)
     return
   end
 
-  -- Create display strings with full paths for preview
+  -- Format items as: display_name<TAB>full_path
   local items = {}
   for _, model in ipairs(models) do
-    -- Format: display_name<TAB>full_path
     table.insert(items, model.display .. "\t" .. model.full_path)
   end
 
+  -- Detect if bat is available
+  local has_bat = vim.fn.executable("bat") == 1
+  local preview_cmd = has_bat
+    and "bat --style=numbers --color=always --line-range :500 {2}"
+    or "cat {2}"
+
   fzf.fzf_exec(items, {
     prompt = "dbt Models> ",
-    -- Use fzf's field index expression to extract path (second field after tab)
     fzf_opts = {
       ["--delimiter"] = "\t",
-      ["--with-nth"] = "1",  -- Display only first field (model name)
+      ["--with-nth"] = "1",        -- Display only the display name (field 1)
+      ["--preview"] = preview_cmd, -- Use fzf's {2} syntax to preview field 2 (the path)
+      ["--preview-window"] = "right:50%:wrap",
     },
-    -- Transform the selected line to extract the file path for preview
-    fn_transform = function(x)
-      -- Extract the path after the tab character
-      return x:match("\t(.+)$") or x
-    end,
-    -- Use builtin file previewer (will receive transformed path)
-    previewer = "builtin",
     winopts = {
       preview = {
         hidden = "nohidden",
