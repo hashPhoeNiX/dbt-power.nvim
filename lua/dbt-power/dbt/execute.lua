@@ -244,7 +244,7 @@ function M.execute_with_direct_query_inline()
     local compile_ms = math.floor((compile_end - compile_start) / 1000000)
 
     if not compiled_sql then
-      vim.notify("[dbt-power] Compilation failed for model: " .. model_name, vim.log.levels.ERROR, { timeout = 5000 })
+      vim.notify("[dbt-power] Compilation failed for model: " .. model_name, vim.log.levels.ERROR, { timeout = 5000, replace = loading_notif_id })
       return
     end
 
@@ -259,6 +259,7 @@ function M.execute_with_direct_query_inline()
       local query_ms = math.floor((query_end - query_start) / 1000000)
 
       if results.error then
+        vim.notify("[dbt-power] Execution failed", vim.log.levels.ERROR, { timeout = 3000, replace = loading_notif_id })
         M.show_error_details("snowsql execution failed for model: " .. model_name, results.error)
         return
       end
@@ -318,22 +319,32 @@ function M.execute_with_dbt_show_command()
     return
   end
 
-  -- Show loading indicator
-  vim.notify("[dbt-power] Executing " .. model_name .. "...", vim.log.levels.INFO, {
+  -- Show loading indicator and capture notification ID
+  local loading_notif = vim.notify("[dbt-power] Executing " .. model_name .. "...", vim.log.levels.INFO, {
     timeout = 0,  -- Don't auto-dismiss while waiting
   })
 
   -- Use dbt show approach
   M.execute_with_dbt_show(project_root, model_name, function(results)
     if results.error then
+      -- Replace loading notification with error
+      vim.notify("[dbt-power] Execution failed", vim.log.levels.ERROR, {
+        timeout = 3000,
+        replace = loading_notif,
+      })
       M.show_error_details("dbt show execution failed for model: " .. model_name, results.error)
       return
     end
 
     inline_results.display_query_results(bufnr, cursor_line, results)
+    -- Replace loading notification with success message
     vim.notify(
       string.format("[dbt-power] Executed successfully (%d rows)", #results.rows),
-      vim.log.levels.INFO
+      vim.log.levels.INFO,
+      {
+        timeout = 3000,
+        replace = loading_notif,
+      }
     )
   end)
 end
