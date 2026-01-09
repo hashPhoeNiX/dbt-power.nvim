@@ -82,13 +82,15 @@ function M.detect_and_get_adapter(project_root, user_config, force_refresh)
     end
   end
 
-  -- Auto-detect from profiles.yml
+  -- Auto-detect from profiles.yml (silent mode since we handle warnings here)
   local profiles = require("dbt-power.database.profiles")
-  local adapter_type = profiles.detect_adapter_type(project_root)
+  local adapter_type = profiles.detect_adapter_type(project_root, true)
 
   if not adapter_type then
+    -- Show our own warning (profiles.lua won't show its warning in silent mode)
     vim.notify(
-      "[dbt-power] Could not detect database adapter from profiles.yml",
+      "[dbt-power] Could not detect database adapter. Please manually specify in config:\n" ..
+      "  database = { adapter = 'snowflake' }  -- or 'postgres', 'bigquery', etc.",
       vim.log.levels.WARN
     )
     return nil

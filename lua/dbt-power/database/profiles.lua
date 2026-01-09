@@ -155,8 +155,9 @@ end
 
 -- Detect adapter type from profiles.yml
 -- @param project_root string: Path to dbt project root
+-- @param silent boolean: If true, suppress warnings about missing profiles
 -- @return string|nil: Adapter type (e.g., "snowflake", "postgres") or nil
-function M.detect_adapter_type(project_root)
+function M.detect_adapter_type(project_root, silent)
   -- Check cache
   local now = os.time()
   if profiles_cache and (now - cache_timestamp) < CACHE_TTL then
@@ -173,17 +174,19 @@ function M.detect_adapter_type(project_root)
   local profiles_path = get_profiles_path(project_root)
   if not profiles_path then
     -- No profiles.yml found (might be using dbt Cloud CLI)
-    -- Check if dbt_cloud.yml exists
-    local home = vim.fn.expand("~")
-    local dbt_cloud_path = home .. "/.dbt/dbt_cloud.yml"
-    local file = io.open(dbt_cloud_path, "r")
-    if file then
-      file:close()
-      vim.notify(
-        "[dbt-power] dbt Cloud CLI detected. Please manually specify adapter in config:\n" ..
-        "  database = { adapter = 'snowflake' }  -- or 'postgres', 'bigquery', etc.",
-        vim.log.levels.WARN
-      )
+    if not silent then
+      -- Check if dbt_cloud.yml exists
+      local home = vim.fn.expand("~")
+      local dbt_cloud_path = home .. "/.dbt/dbt_cloud.yml"
+      local file = io.open(dbt_cloud_path, "r")
+      if file then
+        file:close()
+        vim.notify(
+          "[dbt-power] dbt Cloud CLI detected. Please manually specify adapter in config:\n" ..
+          "  database = { adapter = 'snowflake' }  -- or 'postgres', 'bigquery', etc.",
+          vim.log.levels.WARN
+        )
+      end
     end
     return nil
   end

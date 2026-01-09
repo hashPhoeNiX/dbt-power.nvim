@@ -512,13 +512,28 @@ function M.check()
   local project = require("dbt-power.utils.project")
   local project_root = project.find_dbt_project()
   if project_root then
-    local profiles = require("dbt-power.database.profiles")
-    local adapter_type = profiles.detect_adapter_type(project_root)
-    if adapter_type then
-      vim.health.ok("Detected database adapter: " .. adapter_type)
+    local registry = require("dbt-power.database.registry")
 
-      -- Check if adapter CLI is available
-      local registry = require("dbt-power.database.registry")
+    -- Check if manually specified
+    local adapter_type = nil
+    local is_manual = false
+    if M.config and M.config.database and M.config.database.adapter then
+      adapter_type = M.config.database.adapter
+      is_manual = true
+      vim.health.ok("Using manually specified adapter: " .. adapter_type)
+    else
+      -- Try auto-detection
+      local profiles = require("dbt-power.database.profiles")
+      adapter_type = profiles.detect_adapter_type(project_root)
+      if adapter_type then
+        vim.health.ok("Auto-detected database adapter: " .. adapter_type)
+      else
+        vim.health.warn("Could not auto-detect adapter. For dbt Cloud CLI, manually specify: database = { adapter = 'snowflake' }")
+      end
+    end
+
+    -- Check if adapter CLI is available
+    if adapter_type then
       local adapter = registry.get_adapter(adapter_type, M.config)
       if adapter then
         if adapter:is_cli_available() then
@@ -527,8 +542,6 @@ function M.check()
           vim.health.warn(string.format("%s CLI not found: %s (will fallback to dbt show)", adapter_type, adapter.cli_command or "unknown"))
         end
       end
-    else
-      vim.health.warn("Could not detect database adapter from profiles.yml")
     end
   else
     vim.health.info("Not in a dbt project (adapter detection skipped)")
