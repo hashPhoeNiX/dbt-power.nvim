@@ -401,6 +401,40 @@ function M.create_commands()
     require("dbt-power.dbt.build").build_all_dependencies()
   end, { desc = "Build with all dependencies" })
 
+  -- Diagnostic command to check adapter status
+  vim.api.nvim_create_user_command("DbtAdapterInfo", function()
+    local project = require("dbt-power.utils.project")
+    local project_root = project.find_dbt_project()
+
+    if not project_root then
+      vim.notify("[dbt-power] Not in a dbt project", vim.log.levels.ERROR)
+      return
+    end
+
+    local registry = require("dbt-power.database.registry")
+    local adapter = registry.detect_and_get_adapter(project_root, M.config)
+
+    if not adapter then
+      vim.notify("[dbt-power] Could not detect adapter", vim.log.levels.ERROR)
+      return
+    end
+
+    local cli_available = adapter:is_cli_available()
+    local info = string.format(
+      "[dbt-power] Adapter Info:\n" ..
+      "  Name: %s\n" ..
+      "  CLI Command: %s\n" ..
+      "  CLI Available: %s\n" ..
+      "  Project Root: %s",
+      adapter.name or "unknown",
+      adapter.cli_command or "none",
+      cli_available and "yes" or "no",
+      project_root
+    )
+
+    vim.notify(info, vim.log.levels.INFO)
+  end, { desc = "Show database adapter information" })
+
   -- Main :Dbt command with subcommands (Git-style)
   vim.api.nvim_create_user_command("Dbt", function(opts)
     local subcommand = opts.fargs[1]
