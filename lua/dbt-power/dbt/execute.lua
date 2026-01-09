@@ -3,15 +3,30 @@
 local M = {}
 local Job = require("plenary.job")
 local inline_results = require("dbt-power.ui.inline_results")
+local adapter_registry = require("dbt-power.database.registry")
 
 -- Constants
 local MAX_PARSE_LINES = 1000  -- Safety limit to prevent infinite parsing loops
 local DEFAULT_LIMIT = 500      -- Default row limit for queries
 
 M.config = {}
+local current_adapter = nil
 
 function M.setup(config)
   M.config = config or {}
+
+  -- Initialize adapter for current project
+  local project = require("dbt-power.utils.project")
+  local project_root = project.find_dbt_project()
+  if project_root then
+    current_adapter = adapter_registry.detect_and_get_adapter(project_root, M.config)
+    if current_adapter then
+      vim.notify(
+        string.format("[dbt-power] Detected database adapter: %s", current_adapter.name),
+        vim.log.levels.INFO
+      )
+    end
+  end
 end
 
 -- Execute current model using Power User approach (compile → wrap → execute)
@@ -101,7 +116,7 @@ function M.execute_with_dbt_show_buffer()
   end)
 end
 
--- Execute current model with direct snowsql query (bypasses dbt show truncation)
+-- Execute current model with direct database query (bypasses dbt show truncation)
 -- Display results in a split window with full columns visible
 function M.execute_with_direct_query_buffer()
   local bufnr = vim.api.nvim_get_current_buf()
@@ -133,7 +148,7 @@ function M.execute_with_direct_query_buffer()
 
   -- Show loading indicator
   local buffer_output = require("dbt-power.ui.buffer_output")
-  local loading_notif_id = buffer_output.show_loading("[dbt-power] Compiling and executing " .. model_name .. " with snowsql...")
+  local loading_notif_id = buffer_output.show_loading("[dbt-power] Compiling and executing " .. model_name .. " with database adapter...")
 
   -- Track execution time with breakdown
   local start_time = vim.loop.hrtime()
@@ -153,15 +168,15 @@ function M.execute_with_direct_query_buffer()
     local max_rows = M.config.direct_query and M.config.direct_query.max_rows or 100
     local limited_sql = M.wrap_with_limit(compiled_sql, max_rows)
 
-    -- Execute via snowsql with limited results
+    -- Execute via database adapter with limited results
     local query_start = vim.loop.hrtime()
-    M.execute_via_snowsql(limited_sql, function(results)
+    M.execute_via_adapter(limited_sql, function(results)
       local query_end = vim.loop.hrtime()
       local query_ms = math.floor((query_end - query_start) / 1000000)
 
       if results.error then
         vim.notify("[dbt-power] Error: " .. results.error, vim.log.levels.ERROR, { timeout = 5000, replace = loading_notif_id })
-        M.show_error_details("snowsql execution failed for model: " .. model_name, results.error)
+        M.show_error_details("Database execution failed for model: " .. model_name, results.error)
         return
       end
 
@@ -197,7 +212,7 @@ function M.execute_with_direct_query_buffer()
   end)
 end
 
--- Execute current model with direct snowsql query (inline results)
+-- Execute current model with direct database query (inline results)
 -- Display results inline at cursor position without truncation
 function M.execute_with_direct_query_inline()
   local bufnr = vim.api.nvim_get_current_buf()
@@ -232,7 +247,7 @@ function M.execute_with_direct_query_inline()
   inline_results.clear_at_line(bufnr, cursor_line)
 
   -- Show loading indicator
-  local loading_notif_id = vim.notify("[dbt-power] Compiling and executing " .. model_name .. " with snowsql...", vim.log.levels.INFO, { timeout = 0 })
+  local loading_notif_id = vim.notify("[dbt-power] Compiling and executing " .. model_name .. " with database adapter...", vim.log.levels.INFO, { timeout = 0 })
 
   -- Track execution time with breakdown
   local start_time = vim.loop.hrtime()
@@ -252,15 +267,15 @@ function M.execute_with_direct_query_inline()
     local max_rows = M.config.direct_query and M.config.direct_query.max_rows or 100
     local limited_sql = M.wrap_with_limit(compiled_sql, max_rows)
 
-    -- Execute via snowsql with limited results
+    -- Execute via database adapter with limited results
     local query_start = vim.loop.hrtime()
-    M.execute_via_snowsql(limited_sql, function(results)
+    M.execute_via_adapter(limited_sql, function(results)
       local query_end = vim.loop.hrtime()
       local query_ms = math.floor((query_end - query_start) / 1000000)
 
       if results.error then
         vim.notify("[dbt-power] Execution failed", vim.log.levels.ERROR, { timeout = 3000, replace = loading_notif_id })
-        M.show_error_details("snowsql execution failed for model: " .. model_name, results.error)
+        M.show_error_details("Database execution failed for model: " .. model_name, results.error)
         return
       end
 
@@ -349,7 +364,7 @@ function M.execute_with_dbt_show_command()
   end)
 end
 
--- Execute visual selection via temporary ad-hoc model with snowsql execution
+-- Execute visual selection via temporary ad-hoc model with database adapter execution
 function M.execute_selection()
   local bufnr = vim.api.nvim_get_current_buf()
 
@@ -401,7 +416,7 @@ function M.execute_selection()
   inline_results.clear_at_line(bufnr, cursor_line)
 
   -- Show loading indicator
-  vim.notify("[dbt-power] Executing selection (compiling with dbt, executing with snowsql)...", vim.log.levels.INFO)
+  vim.notify("[dbt-power] Executing selection (compiling with dbt, executing with database adapter)...", vim.log.levels.INFO)
 
   -- Trim the selected SQL and ensure it's clean
   selected_sql = vim.trim(selected_sql)
@@ -447,10 +462,10 @@ function M.execute_selection()
   file:write(final_content)
   file:close()
 
-  -- Execute the ad-hoc model using snowsql
-  M.execute_adhoc_model_with_snowsql(project_root, model_name, model_path, function(results)
+  -- Execute the ad-hoc model using database adapter
+  M.execute_adhoc_model_with_adapter(project_root, model_name, model_path, function(results)
     if results.error then
-      M.show_error_details("snowsql execution failed for selection", results.error)
+      M.show_error_details("Database execution failed for selection", results.error)
       -- Clean up the temporary file on error
       os.remove(model_path)
       return
@@ -517,7 +532,7 @@ function M.execute_selection_with_buffer()
 
   -- Show loading indicator
   local buffer_output = require("dbt-power.ui.buffer_output")
-  buffer_output.show_loading("[dbt-power] Executing selection (compiling with dbt, executing with snowsql)...")
+  buffer_output.show_loading("[dbt-power] Executing selection (compiling with dbt, executing with database adapter)...")
 
   -- Trim the selected SQL and ensure it's clean
   selected_sql = vim.trim(selected_sql)
@@ -584,16 +599,16 @@ function M.execute_selection_with_buffer()
     local max_rows = M.config.direct_query and M.config.direct_query.max_rows or 100
     local limited_sql = M.wrap_with_limit(compiled_sql, max_rows)
 
-    -- Execute via snowsql
+    -- Execute via database adapter
     local query_start = vim.loop.hrtime()
-    M.execute_via_snowsql(limited_sql, function(results)
+    M.execute_via_adapter(limited_sql, function(results)
       local query_end = vim.loop.hrtime()
       local query_ms = math.floor((query_end - query_start) / 1000000)
 
       buffer_output.clear_loading()
 
       if results.error then
-        M.show_error_details("snowsql execution failed for selection", results.error)
+        M.show_error_details("Database execution failed for selection", results.error)
         os.remove(model_path)
         return
       end
@@ -629,8 +644,8 @@ function M.execute_selection_with_buffer()
   end)
 end
 
--- Execute ad-hoc model by compiling with dbt then executing with snowsql
-function M.execute_adhoc_model_with_snowsql(project_root, model_name, model_path, callback)
+-- Execute ad-hoc model by compiling with dbt then executing with database adapter
+function M.execute_adhoc_model_with_adapter(project_root, model_name, model_path, callback)
   -- Track execution time
   local start_time = vim.loop.hrtime()
   local compile_start = start_time
@@ -649,9 +664,9 @@ function M.execute_adhoc_model_with_snowsql(project_root, model_name, model_path
     local max_rows = M.config.direct_query and M.config.direct_query.max_rows or 100
     local limited_sql = M.wrap_with_limit(compiled_sql, max_rows)
 
-    -- Execute via snowsql with limited results
+    -- Execute via database adapter with limited results
     local query_start = vim.loop.hrtime()
-    M.execute_via_snowsql(limited_sql, function(results)
+    M.execute_via_adapter(limited_sql, function(results)
       local query_end = vim.loop.hrtime()
       local query_ms = math.floor((query_end - query_start) / 1000000)
 
@@ -892,8 +907,52 @@ function M.execute_via_dadbod(sql, callback)
   }):start()
 end
 
+-- Execute SQL via detected database adapter
+-- This is the new universal execution method that works with all databases
+function M.execute_via_adapter(sql, callback)
+  -- Get or detect adapter
+  local adapter = current_adapter
+  if not adapter then
+    local project = require("dbt-power.utils.project")
+    local project_root = project.find_dbt_project()
+    if project_root then
+      adapter = adapter_registry.detect_and_get_adapter(project_root, M.config)
+      current_adapter = adapter
+    end
+  end
+
+  if not adapter then
+    vim.notify(
+      "[dbt-power] Could not detect database adapter. Please check your dbt profiles.yml",
+      vim.log.levels.ERROR
+    )
+    callback({ error = "Could not detect database adapter" })
+    return
+  end
+
+  -- Check if adapter CLI is available
+  if not adapter:is_cli_available() then
+    vim.notify(
+      string.format("[dbt-power] %s CLI not found. Using dbt show as fallback", adapter.cli_command or adapter.name),
+      vim.log.levels.WARN
+    )
+    -- Fallback to dbt show (universal method)
+    M.execute_with_dbt_show_from_sql(sql, callback)
+    return
+  end
+
+  vim.notify(
+    string.format("[dbt-power] Executing with %s adapter", adapter.name),
+    vim.log.levels.INFO
+  )
+
+  -- Execute SQL via adapter
+  adapter:execute_sql(sql, callback)
+end
+
 -- Execute SQL using snowsql CLI directly (bypasses dbt show truncation)
 -- This executes the compiled SQL directly against Snowflake
+-- DEPRECATED: Use execute_via_adapter() instead
 function M.execute_via_snowsql(sql, callback)
   -- Remove trailing semicolon and whitespace
   sql = vim.trim(sql)

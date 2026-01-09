@@ -1,9 +1,11 @@
 # dbt-power.nvim
 
-A Neovim plugin for dbt development with Power User-like features, including inline query results display inspired by Molten. Seamlessly integrates with dbt Cloud CLI for executing dbt models without requiring local database credentials.
+A Neovim plugin for dbt development with Power User-like features, including inline query results display inspired by Molten. Seamlessly integrates with dbt Cloud CLI and supports multiple database adapters (Snowflake, PostgreSQL, BigQuery, Redshift, DuckDB, Databricks) with automatic detection from your dbt profiles.
 
 ## Features
 
+- ✅ **Multi-Database Support**: Automatic adapter detection for Snowflake, PostgreSQL, BigQuery, Redshift, DuckDB, and Databricks
+- ✅ **Smart Execution**: Direct CLI execution (psql, bq, snowsql, etc.) with automatic fallback to dbt show
 - ✅ **dbt Cloud Integration**: Execute models using dbt Cloud's database connections (no local credentials needed)
 - ✅ **Inline Query Results**: Execute SQL and see results inline using extmarks (like Jupyter notebooks)
 - ✅ **Compiled SQL Preview**: View compiled dbt models in a split window, with execution from preview
@@ -30,12 +32,32 @@ A Neovim plugin for dbt development with Power User-like features, including inl
 - [vim-dadbod](https://github.com/tpope/vim-dadbod) (optional, for local database connections)
 - [dbtpal](https://github.com/PedramNavid/dbtpal) (optional, for additional dbt utilities)
 - dbt Cloud CLI or dbt Core
+- **Database CLI** (optional, for direct execution - falls back to `dbt show` if not available):
+  - `snowsql` for Snowflake
+  - `psql` for PostgreSQL/Redshift
+  - `bq` for BigQuery
+  - `duckdb` for DuckDB
+  - Databricks uses `dbt show` by default
+
+## Why dbt-power.nvim?
+
+**Works with ANY dbt database** - The plugin automatically detects your database type from your dbt profiles and uses the appropriate execution method. No manual configuration needed!
+
+- **Snowflake** users get direct `snowsql` execution (no row limits)
+- **PostgreSQL/Redshift** users get direct `psql` execution
+- **BigQuery** users get direct `bq query` execution
+- **DuckDB** users get direct `duckdb` execution
+- **Databricks** users get optimized `dbt show` execution
+- **Any database** falls back to universal `dbt show` if CLI not available
+
+Previously, visual selection execution (`<leader>dx`, `<leader>dX`) only worked with Snowflake. **Now it works with ALL databases!**
 
 ## Quick Start
 
 1. **Ensure dbt is configured:**
    ```bash
-   dbt --version  # Should be dbt Cloud CLI
+   dbt --version  # Should be dbt Cloud CLI or dbt Core
+   dbt debug     # Verify your profiles.yml is configured
    ```
 
 2. **Install the plugin:**
@@ -45,8 +67,15 @@ A Neovim plugin for dbt development with Power User-like features, including inl
    - `<leader>dm` or `:Dbt models` - Browse all models with fuzzy search
    - `<leader>dv` or `:Dbt preview` - Preview compiled SQL
    - `<leader>dS` or `:Dbt execute_buffer` - Execute and view results
+   - `<leader>dx` (Visual mode) - Execute SQL selection (works with all databases!)
    - `<leader>dbm` or `:Dbt build` - Build current model
    - `<leader>da` or `:Dbt adhoc` - Create ad-hoc test model
+
+4. **Check adapter detection:**
+   ```vim
+   :checkhealth dbt-power
+   ```
+   This shows your detected database adapter and CLI availability.
 
 ## Installation
 
@@ -197,25 +226,89 @@ Runtime Error
 
 ### Database Setup
 
-#### Recommended: Use dbt Cloud Connections (No Local Credentials)
+#### Automatic Adapter Detection
 
-With dbt Cloud CLI, the plugin automatically uses your dbt Cloud project's database connections:
+The plugin automatically detects your database type from `~/.dbt/profiles.yml`:
+
+```yaml
+# ~/.dbt/profiles.yml
+my_project:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake  # or postgres, bigquery, redshift, duckdb, databricks
+      # ... other connection details
+```
+
+**No configuration needed!** The plugin will:
+1. Read your active dbt profile
+2. Detect the database adapter type
+3. Use the appropriate CLI (snowsql, psql, bq, etc.)
+4. Fall back to `dbt show` if CLI is not available
+
+#### Supported Databases
+
+| Database | CLI Command | Status |
+|----------|------------|--------|
+| Snowflake | `snowsql` | ✅ Full support |
+| PostgreSQL | `psql` | ✅ Full support |
+| BigQuery | `bq` | ✅ Full support |
+| Redshift | `psql` | ✅ Full support (uses PostgreSQL protocol) |
+| DuckDB | `duckdb` | ✅ Full support |
+| Databricks | N/A | ✅ Uses `dbt show` (recommended) |
+
+#### Manual Adapter Configuration
+
+Override auto-detection if needed:
 
 ```lua
--- Just ensure dbt CLI is configured
--- No additional database setup needed!
 require("dbt-power").setup({
-  dbt_cloud_cli = "dbt",  -- Uses your dbt Cloud project
+  database = {
+    -- Manually specify adapter (overrides auto-detection)
+    adapter = "postgres",  -- or "snowflake", "bigquery", etc.
+
+    -- Adapter-specific configurations
+    postgres = {
+      host = "localhost",
+      port = 5432,
+      database = "mydb",
+      user = "myuser",
+      -- Or use connection string:
+      connection_string = "postgresql://user:pass@localhost:5432/mydb",
+    },
+
+    snowflake = {
+      connection_name = "default",  -- From ~/.snowsql/config
+    },
+
+    bigquery = {
+      project_id = "my-gcp-project",
+      dataset = "my_dataset",
+      location = "US",
+    },
+
+    duckdb = {
+      database_path = ":memory:",  -- or path to .duckdb file
+    },
+  },
 })
 ```
 
-**Benefits:**
-- No local database credentials needed
-- Secure credential management via dbt Cloud
-- Works with any authentication method (OAuth, SSO, key pairs, etc.)
-- Perfect for team environments
+#### Backward Compatibility
 
-#### Optional: Local Database Connection with vim-dadbod
+Old Snowflake configurations still work:
+
+```lua
+require("dbt-power").setup({
+  database = {
+    snowsql_connection = "default",  -- DEPRECATED but still works
+  },
+})
+```
+
+You'll see a deprecation warning guiding you to the new config format.
+
+#### Optional: vim-dadbod Integration
 
 For ad-hoc SQL queries outside dbt models, configure vim-dadbod:
 
@@ -259,14 +352,54 @@ require("dbt-power").setup({
     split_size = 80,
   },
 
-  -- Database connections
+  -- Database adapter configuration
   database = {
-    use_dadbod = true,
+    -- Adapter selection: nil (auto-detect), or specify: "snowflake", "postgres", etc.
+    adapter = nil,
+
+    -- Adapter-specific configurations
+    snowflake = {
+      connection_name = "default",  -- From ~/.snowsql/config
+    },
+
+    postgres = {
+      host = "localhost",
+      port = 5432,
+      database = nil,
+      user = nil,
+      connection_string = nil,  -- Alternative: full connection string
+    },
+
+    bigquery = {
+      project_id = nil,
+      dataset = nil,
+      location = "US",
+    },
+
+    duckdb = {
+      database_path = ":memory:",
+    },
+
+    redshift = {
+      host = nil,
+      port = 5439,
+      database = nil,
+      user = nil,
+      connection_string = nil,
+    },
+
+    databricks = {
+      host = nil,
+      http_path = nil,
+      token = nil,
+    },
+
+    -- Legacy vim-dadbod support (optional)
+    use_dadbod = false,
     default_connection = nil,
-    snowsql_connection = "default", -- Connection name from ~/.snowsql/config
   },
 
-  -- Direct query execution (for snowsql bypass)
+  -- Direct query execution settings
   direct_query = {
     max_rows = 100,              -- Row limit for direct queries
     buffer_split_size = 30,      -- Split window height for results
@@ -350,11 +483,14 @@ Ad-hoc models are stored in `models/adhoc/` and are automatically ignored by git
 Core features are complete and stable. Additional features planned:
 
 **Completed:**
+- [x] Multi-database adapter support (Snowflake, PostgreSQL, BigQuery, Redshift, DuckDB, Databricks)
+- [x] Automatic adapter detection from dbt profiles
+- [x] Direct CLI execution with smart fallback
 - [x] Inline results display (extmarks)
 - [x] SQL compilation preview
 - [x] Query execution via dbt show (dbt Cloud)
 - [x] Buffer results display
-- [x] Visual selection execution
+- [x] Visual selection execution (now works with all databases!)
 - [x] CSV export
 - [x] Ad-hoc temporary models
 - [x] Intelligent error handling
@@ -372,10 +508,43 @@ Core features are complete and stable. Additional features planned:
 
 ## Troubleshooting
 
+### Check Plugin Health
+
+Run `:checkhealth dbt-power` to verify:
+- dbt CLI availability
+- Database adapter detection
+- CLI tool availability (psql, bq, snowsql, etc.)
+- Plugin dependencies
+
 ### "Not in a dbt model file" error
 - Make sure you're in a `.sql` file in a dbt project
 - The plugin auto-detects dbt projects by looking for `dbt_project.yml`
 - Use `:checkhealth dbt-power` to verify plugin health
+
+### "Could not detect database adapter" error
+- Ensure `~/.dbt/profiles.yml` exists and is properly formatted
+- Verify your dbt profile is configured: `dbt debug`
+- Check that the profile `type` field matches a supported database
+- Manually specify adapter in config if auto-detection fails:
+  ```lua
+  require("dbt-power").setup({
+    database = { adapter = "postgres" }
+  })
+  ```
+
+### Database CLI not found (falls back to dbt show)
+- Install the appropriate CLI for your database:
+  - Snowflake: Install snowsql
+  - PostgreSQL/Redshift: Install PostgreSQL client (`psql`)
+  - BigQuery: Install Google Cloud SDK (`gcloud` + `bq`)
+  - DuckDB: Install DuckDB CLI
+- The plugin will automatically fall back to `dbt show` if CLI is not available
+- Check CLI availability: `:checkhealth dbt-power`
+
+### Visual selection execution not working (`<leader>dx`)
+- This was previously Snowflake-only, now works with all databases
+- Ensure adapter is detected: `:checkhealth dbt-power`
+- If CLI is not available, it will use `dbt show` (limited to 500 rows)
 
 ### Execution returns "No results returned from model"
 - Verify your model compiles correctly: `dbt compile -s <model_name>`
@@ -401,6 +570,7 @@ Core features are complete and stable. Additional features planned:
 - Inline results are limited to 500 rows by default (configurable)
 - Large datasets will truncate for display but full results are still available
 - Use `max_rows` configuration to adjust
+- Direct CLI execution has no row limit (unlike `dbt show` which is limited to 500)
 
 ## Inspiration
 
