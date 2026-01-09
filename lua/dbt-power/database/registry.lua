@@ -67,10 +67,43 @@ function M.detect_and_get_adapter(project_root, user_config, force_refresh)
     return nil
   end
 
+  -- Debug: Check manual adapter config
+  local has_config = user_config ~= nil
+  local has_db_config = has_config and user_config.database ~= nil
+  local has_adapter = has_db_config and user_config.database.adapter ~= nil
+  local adapter_value = has_adapter and user_config.database.adapter or "nil"
+
+  vim.notify(
+    string.format(
+      "[dbt-power] Registry Debug:\n" ..
+      "  Config: %s\n" ..
+      "  Database config: %s\n" ..
+      "  Adapter setting: %s",
+      has_config and "yes" or "no",
+      has_db_config and "yes" or "no",
+      adapter_value
+    ),
+    vim.log.levels.INFO
+  )
+
   -- Check if user manually specified adapter in config
   if user_config and user_config.database and user_config.database.adapter then
     local adapter_name = user_config.database.adapter
-    return M.get_adapter(adapter_name, user_config)
+    local adapter = M.get_adapter(adapter_name, user_config)
+
+    if adapter then
+      vim.notify(
+        string.format("[dbt-power] Using manually specified adapter: %s", adapter_name),
+        vim.log.levels.INFO
+      )
+    else
+      vim.notify(
+        string.format("[dbt-power] Failed to get adapter: %s", adapter_name),
+        vim.log.levels.ERROR
+      )
+    end
+
+    return adapter
   end
 
   -- Check cache

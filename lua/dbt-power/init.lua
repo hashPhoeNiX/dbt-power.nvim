@@ -183,8 +183,22 @@ end
 
 -- Setup function
 function M.setup(opts)
+  -- Debug: Show what config is being passed
+  local adapter_in_opts = (opts and opts.database and opts.database.adapter) or "nil"
+  vim.notify(
+    string.format("[dbt-power] Setup called with adapter: %s", adapter_in_opts),
+    vim.log.levels.INFO
+  )
+
   -- Migrate legacy configuration
   opts = migrate_legacy_config(opts or {})
+
+  -- Debug: Show config after migration
+  local adapter_after_migrate = (opts and opts.database and opts.database.adapter) or "nil"
+  vim.notify(
+    string.format("[dbt-power] After migration, adapter: %s", adapter_after_migrate),
+    vim.log.levels.INFO
+  )
 
   -- Validate configuration before merging
   if not validate_config(opts) then
@@ -194,6 +208,13 @@ function M.setup(opts)
 
   -- Merge user config with defaults
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
+
+  -- Debug: Show final merged config
+  local adapter_final = (M.config and M.config.database and M.config.database.adapter) or "nil"
+  vim.notify(
+    string.format("[dbt-power] Final merged adapter: %s", adapter_final),
+    vim.log.levels.INFO
+  )
 
   -- Initialize adapter registry
   local registry = require("dbt-power.database.registry")
