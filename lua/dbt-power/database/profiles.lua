@@ -71,19 +71,19 @@ local function parse_yaml_simple(content)
     local indent = #line:match("^%s*")
     local trimmed = vim.trim(line)
 
-    -- Pop stack if indent decreased
-    while indent < indent_stack[#indent_stack] do
-      table.remove(section_stack)
-      table.remove(indent_stack)
-    end
-
-    current_section = section_stack[#section_stack]
-
     -- Parse key-value pair
     local key, value = trimmed:match("^([^:]+):%s*(.*)$")
     if key then
       key = vim.trim(key)
       value = vim.trim(value)
+
+      -- Pop stack if indent decreased or stayed same (for sibling sections)
+      while #indent_stack > 1 and indent <= indent_stack[#indent_stack] do
+        table.remove(section_stack)
+        table.remove(indent_stack)
+      end
+
+      current_section = section_stack[#section_stack]
 
       if value == "" or value == "{}" then
         -- This is a section header
@@ -173,6 +173,18 @@ function M.detect_adapter_type(project_root)
   local profiles_path = get_profiles_path(project_root)
   if not profiles_path then
     -- No profiles.yml found (might be using dbt Cloud CLI)
+    -- Check if dbt_cloud.yml exists
+    local home = vim.fn.expand("~")
+    local dbt_cloud_path = home .. "/.dbt/dbt_cloud.yml"
+    local file = io.open(dbt_cloud_path, "r")
+    if file then
+      file:close()
+      vim.notify(
+        "[dbt-power] dbt Cloud CLI detected. Please manually specify adapter in config:\n" ..
+        "  database = { adapter = 'snowflake' }  -- or 'postgres', 'bigquery', etc.",
+        vim.log.levels.WARN
+      )
+    end
     return nil
   end
 
