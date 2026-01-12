@@ -173,8 +173,8 @@ function M.preview_cte(cte_name, callback)
   compile_job:start()
 end
 
--- Preview a specific CTE by executing it with snowsql
-function M.preview_cte_with_snowsql(cte_name, callback)
+-- Preview a specific CTE by executing it with database adapter
+function M.preview_cte_with_cli(cte_name, callback)
   local project_root = require("dbt-power.utils.project").find_dbt_project()
   if not project_root then
     vim.notify("[dbt-power] Not in a dbt project", vim.log.levels.ERROR)
@@ -189,7 +189,7 @@ function M.preview_cte_with_snowsql(cte_name, callback)
 
   -- Show loading message
   local buffer_output = require("dbt-power.ui.buffer_output")
-  buffer_output.show_loading("[dbt-power] Executing " .. model_name .. " (CTE: " .. cte_name .. ") with snowsql...")
+  buffer_output.show_loading("[dbt-power] Executing " .. model_name .. " (CTE: " .. cte_name .. ") with database adapter...")
 
   -- Track execution time
   local start_time = vim.loop.hrtime()
@@ -256,10 +256,10 @@ function M.preview_cte_with_snowsql(cte_name, callback)
         local max_rows = M.config.direct_query and M.config.direct_query.max_rows or 100
         local limited_cte_query = cte_query .. " LIMIT " .. max_rows
 
-        -- Execute via snowsql
+        -- Execute via database adapter
         local query_start = vim.loop.hrtime()
         local execute_module = require("dbt-power.dbt.execute")
-        execute_module.execute_via_snowsql(limited_cte_query, function(results)
+        execute_module.execute_via_adapter(limited_cte_query, function(results)
           local query_end = vim.loop.hrtime()
           local query_ms = math.floor((query_end - query_start) / 1000000)
 
@@ -398,7 +398,7 @@ end
 function M.show_execution_method_picker(cte_name)
   local methods = {
     { label = "dbt show", execute = M.preview_cte },
-    { label = "snowsql", execute = M.preview_cte_with_snowsql },
+    { label = "Direct CLI", execute = M.preview_cte_with_cli },
   }
 
   vim.ui.select(methods, {
@@ -439,8 +439,8 @@ function M.show_cte_picker_dbt_show()
   end)
 end
 
--- Preview CTE with snowsql
-function M.show_cte_picker_snowsql()
+-- Preview CTE with direct CLI
+function M.show_cte_picker_cli()
   local ctes = M.extract_ctes()
 
   if #ctes == 0 then
@@ -449,18 +449,18 @@ function M.show_cte_picker_snowsql()
   end
 
   if #ctes == 1 then
-    M.preview_cte_with_snowsql(ctes[1], function() end)
+    M.preview_cte_with_cli(ctes[1], function() end)
     return
   end
 
   vim.ui.select(ctes, {
-    prompt = "Select CTE to preview (snowsql):",
+    prompt = "Select CTE to preview (Direct CLI):",
     format_item = function(item)
       return "  " .. item
     end,
   }, function(choice)
     if choice then
-      M.preview_cte_with_snowsql(choice, function() end)
+      M.preview_cte_with_cli(choice, function() end)
     end
   end)
 end
