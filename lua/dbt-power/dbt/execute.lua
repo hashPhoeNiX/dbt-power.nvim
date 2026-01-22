@@ -160,7 +160,11 @@ function M.execute_with_direct_query_buffer()
     local compile_ms = math.floor((compile_end - compile_start) / 1000000)
 
     if not compiled_sql then
-      vim.notify("[dbt-power] Compilation failed for model: " .. model_name, vim.log.levels.ERROR, { timeout = 5000, replace = loading_notif_id })
+      -- Don't show generic error here - detailed error already shown by show_error_details()
+      -- Just clear the loading notification by replacing it with nothing
+      if loading_notif_id then
+        vim.notify("", vim.log.levels.INFO, { replace = loading_notif_id, timeout = 1 })
+      end
       return
     end
 
@@ -259,7 +263,11 @@ function M.execute_with_direct_query_inline()
     local compile_ms = math.floor((compile_end - compile_start) / 1000000)
 
     if not compiled_sql then
-      vim.notify("[dbt-power] Compilation failed for model: " .. model_name, vim.log.levels.ERROR, { timeout = 5000, replace = loading_notif_id })
+      -- Don't show generic error here - detailed error already shown by show_error_details()
+      -- Just clear the loading notification by replacing it with nothing
+      if loading_notif_id then
+        vim.notify("", vim.log.levels.INFO, { replace = loading_notif_id, timeout = 1 })
+      end
       return
     end
 
@@ -436,7 +444,7 @@ function M.execute_selection()
   end
 
   -- Create adhoc directory if it doesn't exist
-  local adhoc_dir = project_root .. "/models/adhoc"
+  local adhoc_dir = project_root .. "/analyses/adhoc"
   local stat = vim.fn.getfperm(adhoc_dir)
   if stat == "" then
     vim.fn.mkdir(adhoc_dir, "p")
@@ -448,17 +456,17 @@ function M.execute_selection()
   local model_name = "adhoc_selection_" .. timestamp .. "_" .. string.format("%03d", micro)
   local model_path = adhoc_dir .. "/" .. model_name .. ".sql"
 
-  -- Write the selected SQL to the temporary model
+  -- Write the selected SQL to the temporary analysis
   local file = io.open(model_path, "w")
   if not file then
     vim.notify(
-      string.format("[dbt-power] Failed to create temporary model file at %s", model_path),
+      string.format("[dbt-power] Failed to create temporary analysis file at %s", model_path),
       vim.log.levels.ERROR
     )
     return
   end
 
-  local final_content = string.format("-- Temporary ad-hoc model from visual selection\n-- %s\n\n%s\n", os.date("%Y-%m-%d %H:%M:%S"), selected_sql)
+  local final_content = string.format("-- Temporary ad-hoc analysis from visual selection\n-- %s\n\n%s\n", os.date("%Y-%m-%d %H:%M:%S"), selected_sql)
   file:write(final_content)
   file:close()
 
@@ -552,7 +560,7 @@ function M.execute_selection_with_buffer()
   end
 
   -- Create adhoc directory if it doesn't exist
-  local adhoc_dir = project_root .. "/models/adhoc"
+  local adhoc_dir = project_root .. "/analyses/adhoc"
   local stat = vim.fn.getfperm(adhoc_dir)
   if stat == "" then
     vim.fn.mkdir(adhoc_dir, "p")
@@ -564,18 +572,18 @@ function M.execute_selection_with_buffer()
   local model_name = "adhoc_selection_" .. timestamp .. "_" .. string.format("%03d", micro)
   local model_path = adhoc_dir .. "/" .. model_name .. ".sql"
 
-  -- Write the selected SQL to the temporary model
+  -- Write the selected SQL to the temporary analysis
   local file = io.open(model_path, "w")
   if not file then
     buffer_output.clear_loading()
     vim.notify(
-      string.format("[dbt-power] Failed to create temporary model file at %s", model_path),
+      string.format("[dbt-power] Failed to create temporary analysis file at %s", model_path),
       vim.log.levels.ERROR
     )
     return
   end
 
-  local final_content = string.format("-- Temporary ad-hoc model from visual selection\n-- %s\n\n%s\n", os.date("%Y-%m-%d %H:%M:%S"), selected_sql)
+  local final_content = string.format("-- Temporary ad-hoc analysis from visual selection\n-- %s\n\n%s\n", os.date("%Y-%m-%d %H:%M:%S"), selected_sql)
   file:write(final_content)
   file:close()
 
@@ -948,6 +956,11 @@ function M.execute_via_adapter(sql, callback)
 
   -- Execute SQL via adapter
   adapter:execute_sql(sql, callback)
+end
+
+-- Clear the cached adapter instance (forces re-detection on next use)
+function M.clear_adapter_cache()
+  current_adapter = nil
 end
 
 -- Execute SQL using snowsql CLI directly (bypasses dbt show truncation)

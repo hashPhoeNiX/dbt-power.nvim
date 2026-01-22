@@ -13,7 +13,7 @@ A Neovim plugin for dbt development with Power User-like features, including inl
 - ✅ **Model Picker**: Browse and open dbt models with fuzzy search (Telescope or fzf-lua)
 - ✅ **Build Commands**: Build models with dependency graph support (upstream/downstream/all)
 - ✅ **CTE Preview**: Extract and preview Common Table Expressions from your SQL
-- ✅ **Ad-hoc Temporary Models**: Create temporary dbt models for testing, auto-ignored by git
+- ✅ **Ad-hoc Temporary Analyses**: Create temporary dbt analyses for testing, auto-ignored by git
 - ✅ **Intelligent Error Handling**: Display actual dbt compilation and execution errors (not generic failures)
 - ✅ **Visual Selection Execution**: Execute any SQL selection from your editor
 - ✅ **Auto-compile Mode**: Live preview of compiled SQL as you type
@@ -69,7 +69,7 @@ Previously, visual selection execution (`<leader>dx`, `<leader>dX`) only worked 
    - `<leader>dS` or `:Dbt execute_buffer` - Execute and view results
    - `<leader>dx` (Visual mode) - Execute SQL selection (works with all databases!)
    - `<leader>dbm` or `:Dbt build` - Build current model
-   - `<leader>da` or `:Dbt adhoc` - Create ad-hoc test model
+   - `<leader>da` or `:Dbt adhoc` - Create ad-hoc test analysis
 
 4. **Check adapter detection:**
    ```vim
@@ -124,7 +124,7 @@ Previously, visual selection execution (`<leader>dx`, `<leader>dX`) only worked 
 | `<leader>dS` | Execute model → results in buffer | Normal |
 | `<leader>ds` | Execute model → inline results | Normal |
 | `<leader>dm` | Open model picker (browse all models) | Normal |
-| `<leader>da` | Create ad-hoc temporary model | Normal |
+| `<leader>da` | Create ad-hoc temporary analysis | Normal |
 | `<leader>dC` | Clear inline results | Normal |
 | `<leader>dA` | Toggle auto-compile mode | Normal |
 | `<leader>dq` | Preview CTE (Common Table Expression) | Normal |
@@ -153,7 +153,7 @@ Previously, visual selection execution (`<leader>dx`, `<leader>dX`) only worked 
 
 #### 3. Ad-hoc Testing (New!)
 ```
-1. Press <leader>da             → Creates models/adhoc/adhoc_YYYYMMDD_HHMMSS.sql
+1. Press <leader>da             → Creates analyses/adhoc/adhoc_YYYYMMDD_HHMMSS.sql
 2. Write your test SQL query
 3. Press <leader>dS or <leader>ds → Execute
 4. Delete file when done (won't be committed, auto-ignored in git)
@@ -279,6 +279,9 @@ require("dbt-power").setup({
 
     snowflake = {
       connection_name = "default",  -- From ~/.snowsql/config
+      login_timeout = 30,           -- Connection timeout in seconds (default: 30)
+      connection_timeout = 30,      -- Query timeout in seconds (default: 30)
+      debug_on_error = true,        -- Enable debug logging on errors (default: true)
     },
 
     bigquery = {
@@ -360,6 +363,9 @@ require("dbt-power").setup({
     -- Adapter-specific configurations
     snowflake = {
       connection_name = "default",  -- From ~/.snowsql/config
+      login_timeout = 30,           -- Connection timeout in seconds (default: 30)
+      connection_timeout = 30,      -- Query timeout in seconds (default: 30)
+      debug_on_error = true,        -- Enable debug logging on errors (default: true)
     },
 
     postgres = {
@@ -449,7 +455,7 @@ Both styles do the same thing - use whichever you prefer!
 | PascalCase | Subcommand | Description |
 |-----------|-----------|-------------|
 | `:DbtModels` | `:Dbt models` | Open model picker to browse and select models |
-| `:DbtAdHoc` | `:Dbt adhoc` | Create a new temporary ad-hoc model for testing |
+| `:DbtAdHoc` | `:Dbt adhoc` | Create a new temporary ad-hoc analysis for testing |
 
 ### Build Commands
 | PascalCase | Subcommand | Description |
@@ -461,22 +467,22 @@ Both styles do the same thing - use whichever you prefer!
 
 **Pro Tip**: The `:Dbt` command has tab completion! Type `:Dbt <Tab>` to see all available subcommands.
 
-### Ad-Hoc Model Management
+### Ad-Hoc Analysis Management
 
-The plugin provides Lua functions for managing ad-hoc models:
+The plugin provides Lua functions for managing ad-hoc analyses:
 
 ```lua
--- Create a new ad-hoc model
+-- Create a new ad-hoc analysis
 require("dbt-power.dbt.adhoc").create_adhoc_model()
 
--- List all ad-hoc models
+-- List all ad-hoc analyses
 require("dbt-power.dbt.adhoc").list_adhoc_models()
 
--- Clean up all ad-hoc models
+-- Clean up all ad-hoc analyses
 require("dbt-power.dbt.adhoc").cleanup_adhoc_models()
 ```
 
-Ad-hoc models are stored in `models/adhoc/` and are automatically ignored by git (see `.gitignore`)
+Ad-hoc analyses are stored in `analyses/adhoc/` and are automatically ignored by git (see `.gitignore`)
 
 ## Development Status
 
@@ -492,7 +498,7 @@ Core features are complete and stable. Additional features planned:
 - [x] Buffer results display
 - [x] Visual selection execution (now works with all databases!)
 - [x] CSV export
-- [x] Ad-hoc temporary models
+- [x] Ad-hoc temporary analyses
 - [x] Intelligent error handling
 - [x] Execution from preview buffer
 - [x] Model picker (Telescope/fzf-lua)
@@ -531,6 +537,25 @@ Run `:checkhealth dbt-power` to verify:
     database = { adapter = "postgres" }
   })
   ```
+
+### Snowflake connection timeouts
+- The plugin now enables debug logging by default on errors to show detailed diagnostics
+- If you see connection errors:
+  1. Check the debug output in the error message for the actual cause
+  2. Test your connection directly: `snowsql -c default`
+  3. Increase timeout if needed:
+     ```lua
+     require("dbt-power").setup({
+       database = {
+         snowflake = {
+           connection_name = "default",
+           login_timeout = 60,  -- Increase from default 30s
+         },
+       },
+     })
+     ```
+  4. Clear adapter cache: `:DbtClearCache`
+  5. Disable debug logging if output is too verbose: `debug_on_error = false`
 
 ### Database CLI not found (falls back to dbt show)
 - Install the appropriate CLI for your database:
