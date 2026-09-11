@@ -43,3 +43,6 @@ luac.out
 .DS_Store
 DATABASE_SETUP.md
 SETUP.md
+tests/
+CLAUDE.md
+CODE_REVIEW.md

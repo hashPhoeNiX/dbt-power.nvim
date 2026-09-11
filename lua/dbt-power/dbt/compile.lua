@@ -111,7 +111,7 @@ function M.show_compiled_sql_for_selection()
   end
 
   -- Create adhoc directory if it doesn't exist
-  local adhoc_dir = project_root .. "/models/adhoc"
+  local adhoc_dir = project_root .. "/analyses/adhoc"
   local stat = vim.fn.getfperm(adhoc_dir)
   if stat == "" then
     vim.fn.mkdir(adhoc_dir, "p")
@@ -123,14 +123,14 @@ function M.show_compiled_sql_for_selection()
   local model_name = "adhoc_selection_" .. timestamp .. "_" .. string.format("%03d", micro)
   local model_path = adhoc_dir .. "/" .. model_name .. ".sql"
 
-  -- Write the selected SQL to the temporary model
+  -- Write the selected SQL to the temporary analysis
   local file = io.open(model_path, "w")
   if not file then
-    vim.notify("[dbt-power] Failed to create temporary model file", vim.log.levels.ERROR)
+    vim.notify("[dbt-power] Failed to create temporary analysis file", vim.log.levels.ERROR)
     return
   end
 
-  local final_content = string.format("-- Temporary ad-hoc model from visual selection\n-- %s\n\n%s\n", os.date("%Y-%m-%d %H:%M:%S"), selected_sql)
+  local final_content = string.format("-- Temporary ad-hoc analysis from visual selection\n-- %s\n\n%s\n", os.date("%Y-%m-%d %H:%M:%S"), selected_sql)
   file:write(final_content)
   file:close()
 

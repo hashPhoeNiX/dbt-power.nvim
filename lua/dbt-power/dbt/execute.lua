@@ -3,15 +3,30 @@
 local M = {}
 local Job = require("plenary.job")
 local inline_results = require("dbt-power.ui.inline_results")
+local adapter_registry = require("dbt-power.database.registry")
 
 -- Constants
 local MAX_PARSE_LINES = 1000  -- Safety limit to prevent infinite parsing loops
 local DEFAULT_LIMIT = 500      -- Default row limit for queries
 
 M.config = {}
+local current_adapter = nil
 
 function M.setup(config)
   M.config = config or {}
+
+  -- Initialize adapter for current project
+  local project = require("dbt-power.utils.project")
+  local project_root = project.find_dbt_project()
+  if project_root then
+    current_adapter = adapter_registry.detect_and_get_adapter(project_root, M.config)
+    if current_adapter then
+      vim.notify(
+        string.format("[dbt-power] Detected database adapter: %s", current_adapter.name),
+        vim.log.levels.INFO
+      )
+    end
+  end
 end
 
 -- Execute current model using Power User approach (compile → wrap → execute)
@@ -101,7 +116,7 @@ function M.execute_with_dbt_show_buffer()
   end)
 end
 
--- Execute current model with direct snowsql query (bypasses dbt show truncation)
+-- Execute current model with direct database query (bypasses dbt show truncation)
 -- Display results in a split window with full columns visible
 function M.execute_with_direct_query_buffer()
   local bufnr = vim.api.nvim_get_current_buf()
@@ -133,7 +148,7 @@ function M.execute_with_direct_query_buffer()
 
   -- Show loading indicator
   local buffer_output = require("dbt-power.ui.buffer_output")
-  local loading_notif_id = buffer_output.show_loading("[dbt-power] Compiling and executing " .. model_name .. " with snowsql...")
+  local loading_notif_id = buffer_output.show_loading("[dbt-power] Compiling and executing " .. model_name .. " with database adapter...")
 
   -- Track execution time with breakdown
   local start_time = vim.loop.hrtime()
@@ -145,7 +160,11 @@ function M.execute_with_direct_query_buffer()
     local compile_ms = math.floor((compile_end - compile_start) / 1000000)
 
     if not compiled_sql then
-      vim.notify("[dbt-power] Compilation failed for model: " .. model_name, vim.log.levels.ERROR, { timeout = 5000, replace = loading_notif_id })
+      -- Don't show generic error here - detailed error already shown by show_error_details()
+      -- Just clear the loading notification by replacing it with nothing
+      if loading_notif_id then
+        vim.notify("", vim.log.levels.INFO, { replace = loading_notif_id, timeout = 1 })
+      end
       return
     end
 
@@ -153,15 +172,15 @@ function M.execute_with_direct_query_buffer()
     local max_rows = M.config.direct_query and M.config.direct_query.max_rows or 100
     local limited_sql = M.wrap_with_limit(compiled_sql, max_rows)
 
-    -- Execute via snowsql with limited results
+    -- Execute via database adapter with limited results
     local query_start = vim.loop.hrtime()
-    M.execute_via_snowsql(limited_sql, function(results)
+    M.execute_via_adapter(limited_sql, function(results)
       local query_end = vim.loop.hrtime()
       local query_ms = math.floor((query_end - query_start) / 1000000)
 
       if results.error then
         vim.notify("[dbt-power] Error: " .. results.error, vim.log.levels.ERROR, { timeout = 5000, replace = loading_notif_id })
-        M.show_error_details("snowsql execution failed for model: " .. model_name, results.error)
+        M.show_error_details("Database execution failed for model: " .. model_name, results.error)
         return
       end
 
@@ -197,7 +216,7 @@ function M.execute_with_direct_query_buffer()
   end)
 end
 
--- Execute current model with direct snowsql query (inline results)
+-- Execute current model with direct database query (inline results)
 -- Display results inline at cursor position without truncation
 function M.execute_with_direct_query_inline()
   local bufnr = vim.api.nvim_get_current_buf()
@@ -232,7 +251,7 @@ function M.execute_with_direct_query_inline()
   inline_results.clear_at_line(bufnr, cursor_line)
 
   -- Show loading indicator
-  local loading_notif_id = vim.notify("[dbt-power] Compiling and executing " .. model_name .. " with snowsql...", vim.log.levels.INFO, { timeout = 0 })
+  local loading_notif_id = vim.notify("[dbt-power] Compiling and executing " .. model_name .. " with database adapter...", vim.log.levels.INFO, { timeout = 0 })
 
   -- Track execution time with breakdown
   local start_time = vim.loop.hrtime()
@@ -244,7 +263,11 @@ function M.execute_with_direct_query_inline()
     local compile_ms = math.floor((compile_end - compile_start) / 1000000)
 
     if not compiled_sql then
-      vim.notify("[dbt-power] Compilation failed for model: " .. model_name, vim.log.levels.ERROR, { timeout = 5000 })
+      -- Don't show generic error here - detailed error already shown by show_error_details()
+      -- Just clear the loading notification by replacing it with nothing
+      if loading_notif_id then
+        vim.notify("", vim.log.levels.INFO, { replace = loading_notif_id, timeout = 1 })
+      end
       return
     end
 
@@ -252,14 +275,15 @@ function M.execute_with_direct_query_inline()
     local max_rows = M.config.direct_query and M.config.direct_query.max_rows or 100
     local limited_sql = M.wrap_with_limit(compiled_sql, max_rows)
 
-    -- Execute via snowsql with limited results
+    -- Execute via database adapter with limited results
     local query_start = vim.loop.hrtime()
-    M.execute_via_snowsql(limited_sql, function(results)
+    M.execute_via_adapter(limited_sql, function(results)
       local query_end = vim.loop.hrtime()
       local query_ms = math.floor((query_end - query_start) / 1000000)
 
       if results.error then
-        M.show_error_details("snowsql execution failed for model: " .. model_name, results.error)
+        vim.notify("[dbt-power] Execution failed", vim.log.levels.ERROR, { timeout = 3000, replace = loading_notif_id })
+        M.show_error_details("Database execution failed for model: " .. model_name, results.error)
         return
       end
 
@@ -318,27 +342,37 @@ function M.execute_with_dbt_show_command()
     return
   end
 
-  -- Show loading indicator
-  vim.notify("[dbt-power] Executing " .. model_name .. "...", vim.log.levels.INFO, {
+  -- Show loading indicator and capture notification ID
+  local loading_notif = vim.notify("[dbt-power] Executing " .. model_name .. "...", vim.log.levels.INFO, {
     timeout = 0,  -- Don't auto-dismiss while waiting
   })
 
   -- Use dbt show approach
   M.execute_with_dbt_show(project_root, model_name, function(results)
     if results.error then
+      -- Replace loading notification with error
+      vim.notify("[dbt-power] Execution failed", vim.log.levels.ERROR, {
+        timeout = 3000,
+        replace = loading_notif,
+      })
       M.show_error_details("dbt show execution failed for model: " .. model_name, results.error)
       return
     end
 
     inline_results.display_query_results(bufnr, cursor_line, results)
+    -- Replace loading notification with success message
     vim.notify(
       string.format("[dbt-power] Executed successfully (%d rows)", #results.rows),
-      vim.log.levels.INFO
+      vim.log.levels.INFO,
+      {
+        timeout = 3000,
+        replace = loading_notif,
+      }
     )
   end)
 end
 
--- Execute visual selection via temporary ad-hoc model with snowsql execution
+-- Execute visual selection via temporary ad-hoc model with database adapter execution
 function M.execute_selection()
   local bufnr = vim.api.nvim_get_current_buf()
 
@@ -390,7 +424,7 @@ function M.execute_selection()
   inline_results.clear_at_line(bufnr, cursor_line)
 
   -- Show loading indicator
-  vim.notify("[dbt-power] Executing selection (compiling with dbt, executing with snowsql)...", vim.log.levels.INFO)
+  vim.notify("[dbt-power] Executing selection (compiling with dbt, executing with database adapter)...", vim.log.levels.INFO)
 
   -- Trim the selected SQL and ensure it's clean
   selected_sql = vim.trim(selected_sql)
@@ -410,7 +444,7 @@ function M.execute_selection()
   end
 
   -- Create adhoc directory if it doesn't exist
-  local adhoc_dir = project_root .. "/models/adhoc"
+  local adhoc_dir = project_root .. "/analyses/adhoc"
   local stat = vim.fn.getfperm(adhoc_dir)
   if stat == "" then
     vim.fn.mkdir(adhoc_dir, "p")
@@ -422,24 +456,24 @@ function M.execute_selection()
   local model_name = "adhoc_selection_" .. timestamp .. "_" .. string.format("%03d", micro)
   local model_path = adhoc_dir .. "/" .. model_name .. ".sql"
 
-  -- Write the selected SQL to the temporary model
+  -- Write the selected SQL to the temporary analysis
   local file = io.open(model_path, "w")
   if not file then
     vim.notify(
-      string.format("[dbt-power] Failed to create temporary model file at %s", model_path),
+      string.format("[dbt-power] Failed to create temporary analysis file at %s", model_path),
       vim.log.levels.ERROR
     )
     return
   end
 
-  local final_content = string.format("-- Temporary ad-hoc model from visual selection\n-- %s\n\n%s\n", os.date("%Y-%m-%d %H:%M:%S"), selected_sql)
+  local final_content = string.format("-- Temporary ad-hoc analysis from visual selection\n-- %s\n\n%s\n", os.date("%Y-%m-%d %H:%M:%S"), selected_sql)
   file:write(final_content)
   file:close()
 
-  -- Execute the ad-hoc model using snowsql
-  M.execute_adhoc_model_with_snowsql(project_root, model_name, model_path, function(results)
+  -- Execute the ad-hoc model using database adapter
+  M.execute_adhoc_model_with_adapter(project_root, model_name, model_path, function(results)
     if results.error then
-      M.show_error_details("snowsql execution failed for selection", results.error)
+      M.show_error_details("Database execution failed for selection", results.error)
       -- Clean up the temporary file on error
       os.remove(model_path)
       return
@@ -506,7 +540,7 @@ function M.execute_selection_with_buffer()
 
   -- Show loading indicator
   local buffer_output = require("dbt-power.ui.buffer_output")
-  buffer_output.show_loading("[dbt-power] Executing selection (compiling with dbt, executing with snowsql)...")
+  buffer_output.show_loading("[dbt-power] Executing selection (compiling with dbt, executing with database adapter)...")
 
   -- Trim the selected SQL and ensure it's clean
   selected_sql = vim.trim(selected_sql)
@@ -526,7 +560,7 @@ function M.execute_selection_with_buffer()
   end
 
   -- Create adhoc directory if it doesn't exist
-  local adhoc_dir = project_root .. "/models/adhoc"
+  local adhoc_dir = project_root .. "/analyses/adhoc"
   local stat = vim.fn.getfperm(adhoc_dir)
   if stat == "" then
     vim.fn.mkdir(adhoc_dir, "p")
@@ -538,18 +572,18 @@ function M.execute_selection_with_buffer()
   local model_name = "adhoc_selection_" .. timestamp .. "_" .. string.format("%03d", micro)
   local model_path = adhoc_dir .. "/" .. model_name .. ".sql"
 
-  -- Write the selected SQL to the temporary model
+  -- Write the selected SQL to the temporary analysis
   local file = io.open(model_path, "w")
   if not file then
     buffer_output.clear_loading()
     vim.notify(
-      string.format("[dbt-power] Failed to create temporary model file at %s", model_path),
+      string.format("[dbt-power] Failed to create temporary analysis file at %s", model_path),
       vim.log.levels.ERROR
     )
     return
   end
 
-  local final_content = string.format("-- Temporary ad-hoc model from visual selection\n-- %s\n\n%s\n", os.date("%Y-%m-%d %H:%M:%S"), selected_sql)
+  local final_content = string.format("-- Temporary ad-hoc analysis from visual selection\n-- %s\n\n%s\n", os.date("%Y-%m-%d %H:%M:%S"), selected_sql)
   file:write(final_content)
   file:close()
 
@@ -573,16 +607,16 @@ function M.execute_selection_with_buffer()
     local max_rows = M.config.direct_query and M.config.direct_query.max_rows or 100
     local limited_sql = M.wrap_with_limit(compiled_sql, max_rows)
 
-    -- Execute via snowsql
+    -- Execute via database adapter
     local query_start = vim.loop.hrtime()
-    M.execute_via_snowsql(limited_sql, function(results)
+    M.execute_via_adapter(limited_sql, function(results)
       local query_end = vim.loop.hrtime()
       local query_ms = math.floor((query_end - query_start) / 1000000)
 
       buffer_output.clear_loading()
 
       if results.error then
-        M.show_error_details("snowsql execution failed for selection", results.error)
+        M.show_error_details("Database execution failed for selection", results.error)
         os.remove(model_path)
         return
       end
@@ -618,8 +652,8 @@ function M.execute_selection_with_buffer()
   end)
 end
 
--- Execute ad-hoc model by compiling with dbt then executing with snowsql
-function M.execute_adhoc_model_with_snowsql(project_root, model_name, model_path, callback)
+-- Execute ad-hoc model by compiling with dbt then executing with database adapter
+function M.execute_adhoc_model_with_adapter(project_root, model_name, model_path, callback)
   -- Track execution time
   local start_time = vim.loop.hrtime()
   local compile_start = start_time
@@ -638,9 +672,9 @@ function M.execute_adhoc_model_with_snowsql(project_root, model_name, model_path
     local max_rows = M.config.direct_query and M.config.direct_query.max_rows or 100
     local limited_sql = M.wrap_with_limit(compiled_sql, max_rows)
 
-    -- Execute via snowsql with limited results
+    -- Execute via database adapter with limited results
     local query_start = vim.loop.hrtime()
-    M.execute_via_snowsql(limited_sql, function(results)
+    M.execute_via_adapter(limited_sql, function(results)
       local query_end = vim.loop.hrtime()
       local query_ms = math.floor((query_end - query_start) / 1000000)
 
@@ -727,6 +761,13 @@ function M.compile_dbt_model(project_root, model_name, callback)
 
         -- Read compiled SQL from target/compiled/
         local compiled_sql = M.read_compiled_sql(project_root, model_name)
+        if not compiled_sql then
+          M.show_error_details(
+            "Could not read compiled SQL for model: " .. model_name,
+            "dbt compile succeeded but no compiled file was found under target/compiled/. "
+              .. "Check that the model name matches an existing target/compiled/**/" .. model_name .. ".sql file."
+          )
+        end
         callback(compiled_sql)
       end)
     end,
@@ -881,8 +922,57 @@ function M.execute_via_dadbod(sql, callback)
   }):start()
 end
 
+-- Execute SQL via detected database adapter
+-- This is the new universal execution method that works with all databases
+function M.execute_via_adapter(sql, callback)
+  -- Get or detect adapter
+  local adapter = current_adapter
+  if not adapter then
+    local project = require("dbt-power.utils.project")
+    local project_root = project.find_dbt_project()
+    if project_root then
+      adapter = adapter_registry.detect_and_get_adapter(project_root, M.config)
+      current_adapter = adapter
+    end
+  end
+
+  if not adapter then
+    vim.notify(
+      "[dbt-power] Could not detect database adapter. Please check your dbt profiles.yml",
+      vim.log.levels.ERROR
+    )
+    callback({ error = "Could not detect database adapter" })
+    return
+  end
+
+  -- Check if adapter CLI is available
+  if not adapter:is_cli_available() then
+    vim.notify(
+      string.format("[dbt-power] %s CLI not found. Using dbt show as fallback", adapter.cli_command or adapter.name),
+      vim.log.levels.WARN
+    )
+    -- Fallback to dbt show (universal method)
+    M.execute_with_dbt_show_from_sql(sql, callback)
+    return
+  end
+
+  vim.notify(
+    string.format("[dbt-power] Executing with %s adapter", adapter.name),
+    vim.log.levels.INFO
+  )
+
+  -- Execute SQL via adapter
+  adapter:execute_sql(sql, callback)
+end
+
+-- Clear the cached adapter instance (forces re-detection on next use)
+function M.clear_adapter_cache()
+  current_adapter = nil
+end
+
 -- Execute SQL using snowsql CLI directly (bypasses dbt show truncation)
 -- This executes the compiled SQL directly against Snowflake
+-- DEPRECATED: Use execute_via_adapter() instead
 function M.execute_via_snowsql(sql, callback)
   -- Remove trailing semicolon and whitespace
   sql = vim.trim(sql)
@@ -1083,6 +1173,69 @@ function M.parse_csv_results(csv_content)
 end
 
 -- FALLBACK METHOD: Use dbt show if compile/execute approach fails
+-- Shared on_exit handler for `dbt show` jobs, whether selected by node name
+-- (--select) or run directly from compiled SQL (--inline).
+local function handle_dbt_show_exit(j, return_val, callback)
+  if return_val ~= 0 then
+    local stderr = table.concat(j:stderr_result(), "\n")
+    local stdout = table.concat(j:result(), "\n")
+    local full_output = stderr
+    if stdout ~= "" then
+      full_output = stdout .. "\n" .. stderr
+    end
+    callback({ error = full_output })
+    return
+  end
+
+  -- Parse results from dbt show output
+  -- Combine stdout and stderr since dbt Cloud CLI might write to both
+  local stdout = table.concat(j:result(), "\n")
+  local stderr = table.concat(j:stderr_result(), "\n")
+  local full_output = stdout
+  if stderr ~= "" then
+    full_output = stdout .. "\n" .. stderr
+  end
+
+  -- FIRST: Check if output contains a dbt error (before trying to parse as table)
+  if full_output:match("Encountered an error:") then
+    -- Extract error section between "Encountered an error:" and "Invocation has finished"
+    local error_section = ""
+    local lines = vim.split(full_output, "\n")
+    local in_error = false
+    for _, line in ipairs(lines) do
+      if line:match("Encountered an error:") then
+        in_error = true
+      end
+      if in_error then
+        error_section = error_section .. line .. "\n"
+        if line:match("Invocation has finished") then
+          break
+        end
+      end
+    end
+    callback({ error = error_section })
+    return
+  end
+
+  -- SECOND: Parse as table results
+  local results = M.parse_dbt_show_results(full_output)
+
+  if not results.columns or #results.columns == 0 then
+    -- No error found and no columns parsed - show debug message
+    local debug_msg = "Parser could not find columns in dbt show output.\n\n"
+    debug_msg = debug_msg .. "Total output length: " .. #full_output .. " chars\n\n"
+    debug_msg = debug_msg .. "Raw output (first 1500 chars):\n"
+    debug_msg = debug_msg .. full_output:sub(1, 1500)
+    if #full_output > 1500 then
+      debug_msg = debug_msg .. "\n... (truncated)\n\nCheck :messages for debug info"
+    end
+    callback({ error = debug_msg })
+    return
+  end
+
+  callback(results)
+end
+
 function M.execute_with_dbt_show(project_root, model_name, callback)
   vim.notify("[dbt-power] Executing with dbt show command", vim.log.levels.INFO)
 
@@ -1103,64 +1256,44 @@ function M.execute_with_dbt_show(project_root, model_name, callback)
     cwd = project_root,
     on_exit = function(j, return_val)
       vim.schedule(function()
-        if return_val ~= 0 then
-          local stderr = table.concat(j:stderr_result(), "\n")
-          local stdout = table.concat(j:result(), "\n")
-          local full_output = stderr
-          if stdout ~= "" then
-            full_output = stdout .. "\n" .. stderr
-          end
-          callback({ error = full_output })
-          return
-        end
+        handle_dbt_show_exit(j, return_val, callback)
+      end)
+    end,
+  }):start()
+end
 
-        -- Parse results from dbt show output
-        -- Combine stdout and stderr since dbt Cloud CLI might write to both
-        local stdout = table.concat(j:result(), "\n")
-        local stderr = table.concat(j:stderr_result(), "\n")
-        local full_output = stdout
-        if stderr ~= "" then
-          full_output = stdout .. "\n" .. stderr
-        end
+-- Run raw/compiled SQL directly via `dbt show --inline`, bypassing node
+-- selection entirely. Used as the dbt-show fallback for SQL that doesn't
+-- correspond to a selectable model (e.g. ad-hoc analyses, visual selections),
+-- since `--select` node-selection support varies by resource type and dbt
+-- version.
+function M.execute_with_dbt_show_from_sql(sql, callback)
+  vim.notify("[dbt-power] Executing with dbt show --inline", vim.log.levels.INFO)
 
-        -- FIRST: Check if output contains a dbt error (before trying to parse as table)
-        if full_output:match("Encountered an error:") then
-          -- Extract error section between "Encountered an error:" and "Invocation has finished"
-          local error_section = ""
-          local lines = vim.split(full_output, "\n")
-          local in_error = false
-          for _, line in ipairs(lines) do
-            if line:match("Encountered an error:") then
-              in_error = true
-            end
-            if in_error then
-              error_section = error_section .. line .. "\n"
-              if line:match("Invocation has finished") then
-                break
-              end
-            end
-          end
-          callback({ error = error_section })
-          return
-        end
+  local project_root = require("dbt-power.utils.project").find_dbt_project()
+  if not project_root then
+    callback({ error = "Could not find dbt project root" })
+    return
+  end
 
-        -- SECOND: Parse as table results
-        local results = M.parse_dbt_show_results(full_output)
+  local limit = M.config.inline_results and M.config.inline_results.max_rows or DEFAULT_LIMIT
 
-        if not results.columns or #results.columns == 0 then
-          -- No error found and no columns parsed - show debug message
-          local debug_msg = "Parser could not find columns in dbt show output.\n\n"
-          debug_msg = debug_msg .. "Total output length: " .. #full_output .. " chars\n\n"
-          debug_msg = debug_msg .. "Raw output (first 1500 chars):\n"
-          debug_msg = debug_msg .. full_output:sub(1, 1500)
-          if #full_output > 1500 then
-            debug_msg = debug_msg .. "\n... (truncated)\n\nCheck :messages for debug info"
-          end
-          callback({ error = debug_msg })
-          return
-        end
+  local cmd = {
+    M.config.dbt_cloud_cli or "dbt",
+    "show",
+    "--inline",
+    sql,
+    "--limit",
+    tostring(limit),
+  }
 
-        callback(results)
+  Job:new({
+    command = cmd[1],
+    args = vim.list_slice(cmd, 2),
+    cwd = project_root,
+    on_exit = function(j, return_val)
+      vim.schedule(function()
+        handle_dbt_show_exit(j, return_val, callback)
       end)
     end,
   }):start()
