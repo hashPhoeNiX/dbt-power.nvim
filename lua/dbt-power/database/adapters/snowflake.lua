@@ -14,14 +14,38 @@ function SnowflakeAdapter:new(config)
   instance.name = "snowflake"
   instance.cli_command = "snowsql"
   instance.config = config or {}
+
+  -- Set default timeout values if not provided
+  instance.config.login_timeout = instance.config.login_timeout or 30  -- seconds
+  instance.config.connection_timeout = instance.config.connection_timeout or 30  -- seconds
+
   instance:is_cli_available()
   return instance
+end
+
+-- Add the -o login_timeout / -o network_timeout flags shared by get_connection_args
+-- and execute_sql's own argument builder.
+local function append_timeout_args(args, config)
+  if config.login_timeout then
+    table.insert(args, "-o")
+    table.insert(args, string.format("login_timeout=%d", config.login_timeout))
+  end
+
+  if config.connection_timeout then
+    table.insert(args, "-o")
+    table.insert(args, string.format("network_timeout=%d", config.connection_timeout))
+  end
 end
 
 -- Get connection arguments for snowsql CLI
 function SnowflakeAdapter:get_connection_args()
   local connection_name = self.config.connection_name or "default"
-  return { "-c", connection_name, "-f" }
+  local args = { "-c", connection_name, "-f" }
+
+  -- Add timeout options to prevent long connection hangs
+  append_timeout_args(args, self.config)
+
+  return args
 end
 
 -- Execute SQL using snowsql CLI
@@ -60,9 +84,23 @@ function SnowflakeAdapter:execute_sql(sql, callback)
     pcall(os.remove, temp_file)
   end
 
+  -- Build snowsql command with timeout options
+  local args = { "-c", connection_name, "-f", temp_file, "-o", "exit_on_error=true", "-o", "friendly=false" }
+
+  -- Add login/network timeouts to prevent long connection hangs
+  append_timeout_args(args, self.config)
+
+  -- Enable debug logging by default to get detailed error messages
+  -- Users can disable this by setting debug_on_error = false in config
+  local enable_debug = self.config.debug_on_error ~= false  -- Default true
+  if enable_debug then
+    table.insert(args, "-o")
+    table.insert(args, "log_level=DEBUG")
+  end
+
   Job:new({
     command = "snowsql",
-    args = { "-c", connection_name, "-f", temp_file },
+    args = args,
     on_exit = function(j, return_val)
       vim.schedule(function()
         -- Always clean up temp file, even on error
@@ -75,6 +113,7 @@ function SnowflakeAdapter:execute_sql(sql, callback)
           if stdout ~= "" then
             full_output = stdout .. "\n" .. stderr
           end
+
           callback({ error = "snowsql query failed:\n" .. full_output })
           return
         end

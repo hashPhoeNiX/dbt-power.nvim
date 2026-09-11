@@ -34,6 +34,9 @@ M.config = {
     -- Adapter-specific configurations
     snowflake = {
       connection_name = "default", -- Connection name from ~/.snowsql/config
+      login_timeout = 30,          -- Connection timeout in seconds (default: 30)
+      connection_timeout = 30,     -- Query timeout in seconds (default: 30)
+      debug_on_error = true,       -- Enable debug logging on errors for detailed diagnostics (default: true)
     },
 
     postgres = {
@@ -161,6 +164,39 @@ local function validate_config(config)
 end
 
 -- Migrate legacy configuration to new adapter structure
+-- Prompt the user to pick a database adapter for the current project and apply it,
+-- clearing both the registry cache and execute.lua's cached adapter instance so the
+-- change actually takes effect on the next query.
+local function set_database_adapter_interactive()
+  local project = require("dbt-power.utils.project")
+  local project_root = project.find_dbt_project()
+
+  if not project_root then
+    vim.notify("[dbt-power] Not in a dbt project", vim.log.levels.ERROR)
+    return
+  end
+
+  local registry = require("dbt-power.database.registry")
+  local adapters = registry.get_registered_adapters()
+
+  vim.ui.select(adapters, {
+    prompt = "Select database adapter:",
+    format_item = function(item)
+      return item
+    end,
+  }, function(choice)
+    if choice then
+      registry.set_manual_adapter(project_root, choice)
+      registry.clear_cache(project_root)
+      require("dbt-power.dbt.execute").clear_adapter_cache()
+      vim.notify(
+        string.format("[dbt-power] Adapter set to '%s' for this project", choice),
+        vim.log.levels.INFO
+      )
+    end
+  end)
+end
+
 local function migrate_legacy_config(config)
   if not config or not config.database then
     return config
@@ -368,6 +404,13 @@ function M.create_keymaps()
       silent = false,
     })
   end
+
+  -- Set adapter manually
+  vim.keymap.set("n", "<leader>dad", set_database_adapter_interactive, {
+    desc = "Set database adapter manually",
+    noremap = true,
+    silent = false,
+  })
 end
 
 -- Create user commands
@@ -441,20 +484,76 @@ function M.create_commands()
     end
 
     local cli_available = adapter:is_cli_available()
+
+    -- Build info string with config details
+    local config_str = ""
+    if adapter.config then
+      for k, v in pairs(adapter.config) do
+        config_str = config_str .. string.format("  %s: %s\n", k, tostring(v))
+      end
+    end
+
     local info = string.format(
       "[dbt-power] Adapter Info:\n" ..
       "  Name: %s\n" ..
       "  CLI Command: %s\n" ..
       "  CLI Available: %s\n" ..
-      "  Project Root: %s",
+      "  Project Root: %s\n" ..
+      "  Configuration:\n%s",
       adapter.name or "unknown",
       adapter.cli_command or "none",
       cli_available and "yes" or "no",
-      project_root
+      project_root,
+      config_str ~= "" and config_str or "    (no config)"
     )
 
     vim.notify(info, vim.log.levels.INFO)
   end, { desc = "Show database adapter information" })
+
+  -- Command to manually set adapter for current project
+  vim.api.nvim_create_user_command(
+    "DbtSetAdapter",
+    set_database_adapter_interactive,
+    { desc = "Manually select database adapter for current project" }
+  )
+
+  -- Command to clear manual adapter override
+  vim.api.nvim_create_user_command("DbtClearManualAdapter", function()
+    local project = require("dbt-power.utils.project")
+    local project_root = project.find_dbt_project()
+
+    if not project_root then
+      vim.notify("[dbt-power] Not in a dbt project", vim.log.levels.ERROR)
+      return
+    end
+
+    local registry = require("dbt-power.database.registry")
+    registry.clear_manual_adapter(project_root)
+    registry.clear_cache(project_root)
+    require("dbt-power.dbt.execute").clear_adapter_cache()
+    vim.notify("[dbt-power] Manual adapter override cleared. Will auto-detect.", vim.log.levels.INFO)
+  end, { desc = "Clear manual adapter override for current project" })
+
+  -- Command to clear adapter cache
+  vim.api.nvim_create_user_command("DbtClearCache", function()
+    local project = require("dbt-power.utils.project")
+    local project_root = project.find_dbt_project()
+
+    local registry = require("dbt-power.database.registry")
+    local execute = require("dbt-power.dbt.execute")
+
+    -- Clear registry cache
+    if project_root then
+      registry.clear_cache(project_root)
+    else
+      registry.clear_cache(nil) -- Clear all caches
+    end
+
+    -- Clear execute module's adapter cache
+    execute.clear_adapter_cache()
+
+    vim.notify("[dbt-power] All adapter caches cleared. Adapter will be re-detected on next use.", vim.log.levels.INFO)
+  end, { desc = "Clear adapter cache (force re-detection)" })
 
   -- Main :Dbt command with subcommands (Git-style)
   vim.api.nvim_create_user_command("Dbt", function(opts)

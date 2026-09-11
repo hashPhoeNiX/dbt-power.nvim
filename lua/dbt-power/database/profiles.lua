@@ -16,7 +16,7 @@ local CACHE_TTL = 300 -- 5 minutes in seconds
 -- Get the path to profiles.yml by searching multiple locations
 -- @param project_root string: dbt project root directory
 -- @return string|nil: Path to profiles.yml or nil if not found
-local function get_profiles_path(project_root)
+function M.get_profiles_path(project_root)
   -- Priority 1: Check project directory (common for dbt Core projects)
   if project_root then
     local project_profiles = project_root .. "/profiles.yml"
@@ -153,55 +153,44 @@ function M.get_active_profile(project_root)
   return profile_name
 end
 
+-- Get parsed profiles.yml, reusing the 5-minute cache when it's still fresh
+-- instead of re-reading and re-parsing the file from disk.
+-- @param project_root string: Path to dbt project root
+-- @return table|nil: Parsed profiles or nil
+function M.get_cached_profiles(project_root)
+  local now = os.time()
+  if profiles_cache and (now - cache_timestamp) < CACHE_TTL then
+    return profiles_cache
+  end
+
+  -- Parse profiles.yml (searches project dir, env var, then ~/.dbt/)
+  local profiles_path = M.get_profiles_path(project_root)
+  if not profiles_path then
+    -- No profiles.yml found (might be using dbt Cloud CLI)
+    return nil
+  end
+
+  local profiles = M.parse_profiles_yml(profiles_path)
+  if not profiles then
+    return nil
+  end
+
+  profiles_cache = profiles
+  cache_timestamp = now
+  return profiles
+end
+
 -- Detect adapter type from profiles.yml
 -- @param project_root string: Path to dbt project root
 -- @param silent boolean: If true, suppress warnings about missing profiles
 -- @return string|nil: Adapter type (e.g., "snowflake", "postgres") or nil
 function M.detect_adapter_type(project_root, silent)
-  -- Check cache
-  local now = os.time()
-  if profiles_cache and (now - cache_timestamp) < CACHE_TTL then
-    -- Use cached profiles
-    local profile_name = M.get_active_profile(project_root)
-    if not profile_name then
-      return nil
-    end
-
-    return M.extract_adapter_type(profiles_cache, profile_name)
-  end
-
-  -- Parse profiles.yml (searches project dir, env var, then ~/.dbt/)
-  local profiles_path = get_profiles_path(project_root)
-  if not profiles_path then
-    -- No profiles.yml found (might be using dbt Cloud CLI)
-    if not silent then
-      -- Check if dbt_cloud.yml exists
-      local home = vim.fn.expand("~")
-      local dbt_cloud_path = home .. "/.dbt/dbt_cloud.yml"
-      local file = io.open(dbt_cloud_path, "r")
-      if file then
-        file:close()
-        vim.notify(
-          "[dbt-power] dbt Cloud CLI detected. Please manually specify adapter in config:\n" ..
-          "  database = { adapter = 'snowflake' }  -- or 'postgres', 'bigquery', etc.",
-          vim.log.levels.WARN
-        )
-      end
-    end
-    return nil
-  end
-
-  local profiles = M.parse_profiles_yml(profiles_path)
-
+  local profiles = M.get_cached_profiles(project_root)
   if not profiles then
+    -- Silent mode: let caller handle the warning message
     return nil
   end
 
-  -- Cache the parsed profiles
-  profiles_cache = profiles
-  cache_timestamp = now
-
-  -- Get active profile
   local profile_name = M.get_active_profile(project_root)
   if not profile_name then
     return nil
@@ -210,12 +199,12 @@ function M.detect_adapter_type(project_root, silent)
   return M.extract_adapter_type(profiles, profile_name)
 end
 
--- Extract adapter type from parsed profiles
+-- Extract full adapter configuration from parsed profiles
 -- @param profiles table: Parsed profiles.yml
 -- @param profile_name string: Profile name to look up
--- @return string|nil: Adapter type or nil
-function M.extract_adapter_type(profiles, profile_name)
-  -- Navigate: profiles → [profile_name] → target → outputs → [target] → type
+-- @return table|nil: Adapter configuration or nil
+function M.extract_adapter_config(profiles, profile_name)
+  -- Navigate: profiles → [profile_name] → target → outputs → [target]
   if not profiles[profile_name] then
     return nil
   end
@@ -236,8 +225,21 @@ function M.extract_adapter_type(profiles, profile_name)
     return nil
   end
 
-  local adapter_type = target.type
-  return adapter_type
+  -- Return the full target configuration (includes type, path, host, etc.)
+  return target
+end
+
+-- Extract adapter type from parsed profiles
+-- @param profiles table: Parsed profiles.yml
+-- @param profile_name string: Profile name to look up
+-- @return string|nil: Adapter type or nil
+function M.extract_adapter_type(profiles, profile_name)
+  local target = M.extract_adapter_config(profiles, profile_name)
+  if not target then
+    return nil
+  end
+
+  return target.type
 end
 
 -- Clear profiles cache (useful for testing or manual refresh)

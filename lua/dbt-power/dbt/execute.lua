@@ -761,6 +761,13 @@ function M.compile_dbt_model(project_root, model_name, callback)
 
         -- Read compiled SQL from target/compiled/
         local compiled_sql = M.read_compiled_sql(project_root, model_name)
+        if not compiled_sql then
+          M.show_error_details(
+            "Could not read compiled SQL for model: " .. model_name,
+            "dbt compile succeeded but no compiled file was found under target/compiled/. "
+              .. "Check that the model name matches an existing target/compiled/**/" .. model_name .. ".sql file."
+          )
+        end
         callback(compiled_sql)
       end)
     end,
@@ -1166,6 +1173,69 @@ function M.parse_csv_results(csv_content)
 end
 
 -- FALLBACK METHOD: Use dbt show if compile/execute approach fails
+-- Shared on_exit handler for `dbt show` jobs, whether selected by node name
+-- (--select) or run directly from compiled SQL (--inline).
+local function handle_dbt_show_exit(j, return_val, callback)
+  if return_val ~= 0 then
+    local stderr = table.concat(j:stderr_result(), "\n")
+    local stdout = table.concat(j:result(), "\n")
+    local full_output = stderr
+    if stdout ~= "" then
+      full_output = stdout .. "\n" .. stderr
+    end
+    callback({ error = full_output })
+    return
+  end
+
+  -- Parse results from dbt show output
+  -- Combine stdout and stderr since dbt Cloud CLI might write to both
+  local stdout = table.concat(j:result(), "\n")
+  local stderr = table.concat(j:stderr_result(), "\n")
+  local full_output = stdout
+  if stderr ~= "" then
+    full_output = stdout .. "\n" .. stderr
+  end
+
+  -- FIRST: Check if output contains a dbt error (before trying to parse as table)
+  if full_output:match("Encountered an error:") then
+    -- Extract error section between "Encountered an error:" and "Invocation has finished"
+    local error_section = ""
+    local lines = vim.split(full_output, "\n")
+    local in_error = false
+    for _, line in ipairs(lines) do
+      if line:match("Encountered an error:") then
+        in_error = true
+      end
+      if in_error then
+        error_section = error_section .. line .. "\n"
+        if line:match("Invocation has finished") then
+          break
+        end
+      end
+    end
+    callback({ error = error_section })
+    return
+  end
+
+  -- SECOND: Parse as table results
+  local results = M.parse_dbt_show_results(full_output)
+
+  if not results.columns or #results.columns == 0 then
+    -- No error found and no columns parsed - show debug message
+    local debug_msg = "Parser could not find columns in dbt show output.\n\n"
+    debug_msg = debug_msg .. "Total output length: " .. #full_output .. " chars\n\n"
+    debug_msg = debug_msg .. "Raw output (first 1500 chars):\n"
+    debug_msg = debug_msg .. full_output:sub(1, 1500)
+    if #full_output > 1500 then
+      debug_msg = debug_msg .. "\n... (truncated)\n\nCheck :messages for debug info"
+    end
+    callback({ error = debug_msg })
+    return
+  end
+
+  callback(results)
+end
+
 function M.execute_with_dbt_show(project_root, model_name, callback)
   vim.notify("[dbt-power] Executing with dbt show command", vim.log.levels.INFO)
 
@@ -1186,64 +1256,44 @@ function M.execute_with_dbt_show(project_root, model_name, callback)
     cwd = project_root,
     on_exit = function(j, return_val)
       vim.schedule(function()
-        if return_val ~= 0 then
-          local stderr = table.concat(j:stderr_result(), "\n")
-          local stdout = table.concat(j:result(), "\n")
-          local full_output = stderr
-          if stdout ~= "" then
-            full_output = stdout .. "\n" .. stderr
-          end
-          callback({ error = full_output })
-          return
-        end
+        handle_dbt_show_exit(j, return_val, callback)
+      end)
+    end,
+  }):start()
+end
 
-        -- Parse results from dbt show output
-        -- Combine stdout and stderr since dbt Cloud CLI might write to both
-        local stdout = table.concat(j:result(), "\n")
-        local stderr = table.concat(j:stderr_result(), "\n")
-        local full_output = stdout
-        if stderr ~= "" then
-          full_output = stdout .. "\n" .. stderr
-        end
+-- Run raw/compiled SQL directly via `dbt show --inline`, bypassing node
+-- selection entirely. Used as the dbt-show fallback for SQL that doesn't
+-- correspond to a selectable model (e.g. ad-hoc analyses, visual selections),
+-- since `--select` node-selection support varies by resource type and dbt
+-- version.
+function M.execute_with_dbt_show_from_sql(sql, callback)
+  vim.notify("[dbt-power] Executing with dbt show --inline", vim.log.levels.INFO)
 
-        -- FIRST: Check if output contains a dbt error (before trying to parse as table)
-        if full_output:match("Encountered an error:") then
-          -- Extract error section between "Encountered an error:" and "Invocation has finished"
-          local error_section = ""
-          local lines = vim.split(full_output, "\n")
-          local in_error = false
-          for _, line in ipairs(lines) do
-            if line:match("Encountered an error:") then
-              in_error = true
-            end
-            if in_error then
-              error_section = error_section .. line .. "\n"
-              if line:match("Invocation has finished") then
-                break
-              end
-            end
-          end
-          callback({ error = error_section })
-          return
-        end
+  local project_root = require("dbt-power.utils.project").find_dbt_project()
+  if not project_root then
+    callback({ error = "Could not find dbt project root" })
+    return
+  end
 
-        -- SECOND: Parse as table results
-        local results = M.parse_dbt_show_results(full_output)
+  local limit = M.config.inline_results and M.config.inline_results.max_rows or DEFAULT_LIMIT
 
-        if not results.columns or #results.columns == 0 then
-          -- No error found and no columns parsed - show debug message
-          local debug_msg = "Parser could not find columns in dbt show output.\n\n"
-          debug_msg = debug_msg .. "Total output length: " .. #full_output .. " chars\n\n"
-          debug_msg = debug_msg .. "Raw output (first 1500 chars):\n"
-          debug_msg = debug_msg .. full_output:sub(1, 1500)
-          if #full_output > 1500 then
-            debug_msg = debug_msg .. "\n... (truncated)\n\nCheck :messages for debug info"
-          end
-          callback({ error = debug_msg })
-          return
-        end
+  local cmd = {
+    M.config.dbt_cloud_cli or "dbt",
+    "show",
+    "--inline",
+    sql,
+    "--limit",
+    tostring(limit),
+  }
 
-        callback(results)
+  Job:new({
+    command = cmd[1],
+    args = vim.list_slice(cmd, 2),
+    cwd = project_root,
+    on_exit = function(j, return_val)
+      vim.schedule(function()
+        handle_dbt_show_exit(j, return_val, callback)
       end)
     end,
   }):start()
