@@ -87,6 +87,20 @@ function M.normalize_profile_config(adapter_type, profile_config, project_root)
     if profile_config.host then normalized.host = profile_config.host end
     if profile_config.http_path then normalized.http_path = profile_config.http_path end
     if profile_config.token then normalized.token = profile_config.token end
+
+  -- ClickHouse adapter
+  elseif adapter_type == "clickhouse" then
+    if profile_config.host then normalized.host = profile_config.host end
+    if profile_config.port then normalized.port = tonumber(profile_config.port) end
+    if profile_config.user then normalized.user = profile_config.user end
+    if profile_config.password then normalized.password = profile_config.password end
+    -- dbt-clickhouse uses `schema` (sometimes `database`) for the ClickHouse database name
+    if profile_config.schema or profile_config.database then
+      normalized.database = profile_config.database or profile_config.schema
+    end
+    if profile_config.secure ~= nil then
+      normalized.secure = tostring(profile_config.secure):lower() == "true"
+    end
   end
 
   return normalized
@@ -327,6 +341,11 @@ function M.init()
   local ok, databricks = pcall(require, "dbt-power.database.adapters.databricks")
   if ok then
     M.register_adapter(databricks.DatabricksAdapter)
+  end
+
+  local ok, clickhouse = pcall(require, "dbt-power.database.adapters.clickhouse")
+  if ok then
+    M.register_adapter(clickhouse.ClickHouseAdapter)
   end
 end
 

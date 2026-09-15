@@ -1,10 +1,10 @@
 # dbt-power.nvim
 
-A Neovim plugin for dbt development with Power User-like features, including inline query results display inspired by Molten. Seamlessly integrates with dbt Cloud CLI and supports multiple database adapters (Snowflake, PostgreSQL, BigQuery, Redshift, DuckDB, Databricks) with automatic detection from your dbt profiles.
+A Neovim plugin for dbt development with Power User-like features, including inline query results display inspired by Molten. Seamlessly integrates with dbt Cloud CLI and supports multiple database adapters (Snowflake, PostgreSQL, BigQuery, Redshift, DuckDB, Databricks, ClickHouse) with automatic detection from your dbt profiles.
 
 ## Features
 
-- ✅ **Multi-Database Support**: Automatic adapter detection for Snowflake, PostgreSQL, BigQuery, Redshift, DuckDB, and Databricks
+- ✅ **Multi-Database Support**: Automatic adapter detection for Snowflake, PostgreSQL, BigQuery, Redshift, DuckDB, Databricks, and ClickHouse
 - ✅ **Smart Execution**: Direct CLI execution (psql, bq, snowsql, etc.) with automatic fallback to dbt show
 - ✅ **dbt Cloud Integration**: Execute models using dbt Cloud's database connections (no local credentials needed)
 - ✅ **Inline Query Results**: Execute SQL and see results inline using extmarks (like Jupyter notebooks)
@@ -37,6 +37,7 @@ A Neovim plugin for dbt development with Power User-like features, including inl
   - `psql` for PostgreSQL/Redshift
   - `bq` for BigQuery
   - `duckdb` for DuckDB
+  - `clickhouse-client` for ClickHouse
   - Databricks uses `dbt show` by default
 
 ## Why dbt-power.nvim?
@@ -48,6 +49,7 @@ A Neovim plugin for dbt development with Power User-like features, including inl
 - **BigQuery** users get direct `bq query` execution
 - **DuckDB** users get direct `duckdb` execution
 - **Databricks** users get optimized `dbt show` execution
+- **ClickHouse** users get direct `clickhouse-client` execution
 - **Any database** falls back to universal `dbt show` if CLI not available
 
 Previously, visual selection execution (`<leader>dx`, `<leader>dX`) only worked with Snowflake. **Now it works with ALL databases!**
@@ -236,7 +238,7 @@ my_project:
   target: dev
   outputs:
     dev:
-      type: snowflake  # or postgres, bigquery, redshift, duckdb, databricks
+      type: snowflake  # or postgres, bigquery, redshift, duckdb, databricks, clickhouse
       # ... other connection details
 ```
 
@@ -256,6 +258,7 @@ my_project:
 | Redshift | `psql` | ✅ Full support (uses PostgreSQL protocol) |
 | DuckDB | `duckdb` | ✅ Full support |
 | Databricks | N/A | ✅ Uses `dbt show` (recommended) |
+| ClickHouse | `clickhouse-client` | ✅ Full support |
 
 #### Manual Adapter Configuration
 
@@ -292,6 +295,15 @@ require("dbt-power").setup({
 
     duckdb = {
       database_path = ":memory:",  -- or path to .duckdb file
+    },
+
+    clickhouse = {
+      host = "localhost",
+      port = 9000,
+      user = "default",
+      password = nil,
+      database = nil,  -- ClickHouse database (dbt "schema")
+      secure = false,  -- Enable TLS
     },
   },
 })
@@ -400,6 +412,15 @@ require("dbt-power").setup({
       token = nil,
     },
 
+    clickhouse = {
+      host = "localhost",
+      port = 9000,
+      user = "default",
+      password = nil,
+      database = nil,
+      secure = false,
+    },
+
     -- Legacy vim-dadbod support (optional)
     use_dadbod = false,
     default_connection = nil,
@@ -489,7 +510,7 @@ Ad-hoc analyses are stored in `analyses/adhoc/` and are automatically ignored by
 Core features are complete and stable. Additional features planned:
 
 **Completed:**
-- [x] Multi-database adapter support (Snowflake, PostgreSQL, BigQuery, Redshift, DuckDB, Databricks)
+- [x] Multi-database adapter support (Snowflake, PostgreSQL, BigQuery, Redshift, DuckDB, Databricks, ClickHouse)
 - [x] Automatic adapter detection from dbt profiles
 - [x] Direct CLI execution with smart fallback
 - [x] Inline results display (extmarks)
@@ -563,6 +584,7 @@ Run `:checkhealth dbt-power` to verify:
   - PostgreSQL/Redshift: Install PostgreSQL client (`psql`)
   - BigQuery: Install Google Cloud SDK (`gcloud` + `bq`)
   - DuckDB: Install DuckDB CLI
+  - ClickHouse: Install the ClickHouse client (`clickhouse-client`)
 - The plugin will automatically fall back to `dbt show` if CLI is not available
 - Check CLI availability: `:checkhealth dbt-power`
 

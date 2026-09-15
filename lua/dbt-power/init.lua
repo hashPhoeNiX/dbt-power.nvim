@@ -71,6 +71,15 @@ M.config = {
       token = nil,
     },
 
+    clickhouse = {
+      host = "localhost",
+      port = 9000,
+      user = "default",
+      password = nil,
+      database = nil,
+      secure = false,
+    },
+
     -- DEPRECATED: Kept for backward compatibility
     snowsql_connection = nil,
   },
